@@ -48,10 +48,10 @@ def load_data(hdf5_path):
                 elif len(individual_light_curves) > 5:
                     individual_light_curves = individual_light_curves[:5]
 
-                print(f"System: {system}, Detected Planets: {detected_count}")
-                print(f"Time Shape: {time.shape}, Flux Shape: {flux_with_noise.shape}")
-                print(f"Individual Light Curves: {[curve.shape for curve in individual_light_curves]}")
-                print()
+                # print(f"System: {system}, Detected Planets: {detected_count}")
+                # print(f"Time Shape: {time.shape}, Flux Shape: {flux_with_noise.shape}")
+                # print(f"Individual Light Curves: {[curve.shape for curve in individual_light_curves]}")
+                # print()
                 
                 inputs.append([flux_with_noise, time])
                 outputs.append((detected_count, individual_light_curves))
@@ -129,7 +129,7 @@ class TransitModel(nn.Module):
         
         return detected_count, individual_flux, individual_time
 
-def train_model(model, x_train, y_train, device, epochs=50, batch_size=8):
+def train_model(model, x_train, y_train, device, epochs=1000, batch_size=16):
     # Convert data to tensors
     flux_with_noise_tensor = torch.tensor(np.array(x_train[0]), dtype=torch.float32).clone().detach().to(device)
     time_tensor = torch.tensor(np.array(x_train[1]), dtype=torch.float32).clone().detach().to(device)
@@ -183,8 +183,8 @@ def save_model(model, path):
 # Function to load the model and input dimensions
 def load_model(path, device):
     checkpoint = torch.load(path, map_location=device)
-    max_flux_len = 14336
-    max_time_len = 14336
+    max_flux_len = 16384
+    max_time_len = 16384
     model = TransitModel(max_flux_len, max_time_len).to(device)
     model.load_state_dict(checkpoint['model_state_dict'])  # Correctly load the model state dict
     model.eval()
@@ -192,7 +192,7 @@ def load_model(path, device):
 
 # Main Function to Run
 def main(hdf5_path):
-    max_len = 14336
+    max_len = 16384
 
     # Check for CUDA
     # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
