@@ -40,9 +40,9 @@ def generate_multi_planet_light_curve(planets, star_radius=1.0, observation_nois
 
 # Define the function to load the model and make predictions
 def load_model_and_predict(model_path, planets):
-    max_len = 14336
+    max_len = 16384
     # Generate the light curve
-    time, flux_with_noise, planet_light_curves, detected_count, individual_light_curves = generate_multi_planet_light_curve(planets)
+    time, flux_with_noise, detected_count, individual_light_curves = generate_multi_planet_light_curve(planets)
     
     # Load the trained model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -68,7 +68,7 @@ def load_model_and_predict(model_path, planets):
     
     # Make predictions
     with torch.no_grad():
-        detected_count_pred, individual_light_curves_flux_pred, individual_light_curves_time_pred = model(flux_with_noise_tensor, time_tensor)
+        detected_count_pred= model(flux_with_noise_tensor, time_tensor)
     
     # Print the number of predicted planets vs actual planets
     print(f"Actual number of detected planets: {detected_count}")
@@ -76,12 +76,7 @@ def load_model_and_predict(model_path, planets):
     
     # Plot the actual individual light curves
     plt.figure(figsize=(12, 6))
-    for i, light_curve in enumerate(individual_light_curves):
-        plt.plot(time, light_curve, label=f'Actual Light Curve {i+1}')
-    
-    # Plot the predicted individual light curves
-    for i in range(individual_light_curves_flux_pred.shape[1]):
-        plt.plot(individual_light_curves_time_pred.cpu().numpy()[0, i], individual_light_curves_flux_pred.cpu().numpy()[0, i], '--', label=f'Predicted Light Curve {i+1}')
+    plt.plot(time, flux_with_noise, label=f'Actual Light Curve {i+1}')
     
     plt.xlabel('Time')
     plt.ylabel('Flux')
