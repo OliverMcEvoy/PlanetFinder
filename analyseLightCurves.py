@@ -49,14 +49,14 @@ def plot_light_curves(estimated_planets):
     plt.show()
 
 def main():
-    num_systems = 1
+    num_systems = 10
     max_planets_per_system = 8
     total_time = 120
     max_len = 120 * 20
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel(max_len, max_len).to(device)
-    model.load_state_dict(torch.load("transit_model_with_planet_counts.pth", map_location=device)['model_state_dict'])
+    model.load_state_dict(torch.load("10_epoch_model.pth", map_location=device)['model_state_dict'])
 
     light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.05)
     estimated_planets = analyze_light_curves(light_curves, model, device)

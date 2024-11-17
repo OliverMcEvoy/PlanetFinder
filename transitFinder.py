@@ -139,7 +139,7 @@ class EarlyStopping:
             return True
         return False
 
-def train_model(model, hdf5_path, device, epochs=50, batch_size=512, patience=25):
+def train_model(model, hdf5_path, device, epochs=3, batch_size=128, patience=5):
     optimizer = optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-3)
     criterion = nn.CrossEntropyLoss()  # Using CrossEntropyLoss for multi-class classification
     early_stopping = EarlyStopping(patience=patience)
@@ -248,7 +248,7 @@ def main(hdf5_path):
     train_model(model, hdf5_path, device)
     
     # Save the trained model
-    save_model(model, "transit_model_with_planet_counts.pth")
+    save_model(model, "10_epoch_model_SNR_3.pth")
 
     # Example prediction for a new flux and time
     flux_example = np.random.rand(max_len)  # Replace with actual data
@@ -260,4 +260,4 @@ def main(hdf5_path):
     
 # Run the main function
 if __name__ == "__main__":
-    main("no_exo_module_planet_systems.hdf5")
+    main("no_exo_module_planet_systems_SNR_3.hdf5")
