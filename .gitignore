@@ -1,3 +1,8 @@
 /__pycache__
 /astro_env
 planet_systems.hdf5
+planet_systems*
+transit_model*
+no_exo*
+/runs/*
+/Data/*
