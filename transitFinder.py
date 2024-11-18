@@ -219,7 +219,7 @@ def load_model(path, device):
     max_flux_len = 120*20
     max_time_len = 120*20
     model = TransitModel(max_flux_len, max_time_len).to(device)
-    model.load_state_dict(checkpoint['model_state_dict'])  # Correctly load the model state dict
+    model.load_state_dict(checkpoint['model_state_dict'])  
     model.eval()
     return model
 
