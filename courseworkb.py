@@ -6,14 +6,19 @@ import scipy.signal
 from scipy.signal import find_peaks
 from scipy.signal import savgol_filter
 from lightkurve import search_lightcurve
+import multiprocessing
 
 def fetch_kepler_data_and_stellar_info(target):
     search_result = search_lightcurve(target, mission="Kepler")
     lc_collection = search_result.download_all()
 
     time, flux, error = np.array([]), np.array([]), np.array([])
+    quart = 0
     for lc in lc_collection:
-        lc_data = lc.normalize().remove_nans()
+        print(f"Downloading light curve segment {quart + 1} of {len(lc_collection)}", end='\r')
+        quart += 1
+
+        lc_data = lc.remove_nans()
         tmptime = lc_data.time.value
         tmpflux = lc_data.flux.value
         tmperror = lc_data.flux_err.value
@@ -28,7 +33,7 @@ def fetch_kepler_data_and_stellar_info(target):
 
         time = np.append(time, tmptime)
         flux = np.append(flux, tmpflux / interp_savgol)
-        error = np.append(error, tmperror)
+        error = np.append(error, tmperror / interp_savgol)
 
     df = pd.DataFrame({"time": time, "flux": flux, "error": error})
     mean_flux = np.mean(flux)
@@ -47,16 +52,10 @@ def fetch_kepler_data_and_stellar_info(target):
 
     return df, stellar_params
 
-# Find transit peaks (Lomb-Scargle or Fourier Spectrum)
-def find_transits(x, y):
-    freqs = np.linspace(1/(x.iloc[-1] - x.iloc[0]), 1/(x.iloc[1] - x.iloc[0]), 15000)
-    lomb = scipy.signal.lombscargle(x, y, freqs, precenter=True)
-    period = 1 / freqs
-    return period, lomb
 
-def run_bls_analysis(time, flux, error, min_period, max_period, duration_range=(0.01, 0.1)):
+def run_bls_analysis(time, flux, error, min_period, max_period, duration_range=(0.01, 1)):
     bls = BoxLeastSquares(time, flux, dy=error)
-    periods = np.linspace(min_period, max_period, 5000)
+    periods = np.linspace(min_period, max_period, 10000)
     durations = np.linspace(duration_range[0], duration_range[1], 100)
     results = bls.power(periods, durations)
 
@@ -82,17 +81,18 @@ def estimate_planet_radius(transit_depth, stellar_radius):
     planet_radius = np.sqrt(transit_depth) * stellar_radius 
     return planet_radius
 
+def analyze_period(period, time, flux, error, duration_range):
+    try:
+        print(f"Analyzing period {period:.2f} days...")
 
-# Analyze peaks with BLS
-def analyze_peaks_with_bls(time, flux, error, peak_periods, duration_range=(0.01, 0.1)):
-    results_list = []
-    for period in peak_periods:
-        print(f"Analyzing candidate period: {period:.2f} days")
+        # Ensure period is a scalar
+        if isinstance(period, np.ndarray):
+            period = period.item()
 
-        # Skip periods that are too short for a valid transit duration
+        # Skip periods that are too short for a valid transit duration.
         if period < duration_range[1]:
             print(f"Skipping period {period:.2f} days as it's shorter than the maximum transit duration.")
-            continue
+            return None
 
         results, _, _, best_period, best_transit_model = run_bls_analysis(
             time,
@@ -104,38 +104,138 @@ def analyze_peaks_with_bls(time, flux, error, peak_periods, duration_range=(0.01
         )
         
         if best_period is not None:
-            results_list.append({
+            return {
                 "candidate_period": period,
                 "refined_period": best_period,
                 "transit_model": best_transit_model,
                 "power": max(results.power),
                 "duration": results.duration[np.argmax(results.power)],
                 "depth": results.depth[np.argmax(results.power)],
-            })
-    return results_list
+            }
+        return None
+    except Exception as e:
+        return {"error": str(e), "period": period}
 
 
-# Visualize phase-folded light curves
+def analyze_peaks_with_bls(time, flux, error, peak_periods, duration_range=(0.01, 0.1)):
+
+    with multiprocessing.Pool() as pool:
+        results_list = pool.starmap(analyze_period, [(period, time, flux, error, duration_range) for period in peak_periods])
+    
+    # Filter out None results and handle errors
+    final_results = []
+    for result in results_list:
+        if result is None:
+            continue
+        if "error" in result:
+            print(f"Error analyzing period {result['period']}: {result['error']}")
+        else:
+            final_results.append(result)
+    
+    return final_results
+
+def remove_exact_duplicates(results_list, decimal_places=3):
+    unique_results = []
+    unique_periods = set()
+    
+    for result in results_list:
+        period = round(result["refined_period"], decimal_places)
+        if period not in unique_periods:
+            unique_periods.add(period)
+            unique_results.append(result)
+    
+    return unique_results
+
+def remove_duplicate_periods(results_list, decimal_places=3, percentage_threshold=0.05):
+    # Remove exact duplicates
+    unique_results = remove_exact_duplicates(results_list, decimal_places)
+    # Sort results by refined_period
+    unique_results = sorted(unique_results, key=lambda x: x["refined_period"])
+
+    final_results = []
+    final_periods = set()
+    
+    for result in unique_results:
+        print(f"Checking period {result['refined_period']:.2f} days...")
+        period = round(result["refined_period"], decimal_places)
+        is_unique = True
+        
+        for final_period in final_periods:
+            ratio = period / final_period
+            rounded_ratio = round(ratio, decimal_places)
+            lower_bound = (1 - percentage_threshold) * rounded_ratio
+            upper_bound = (1 + percentage_threshold) * rounded_ratio
+            
+            if lower_bound < ratio < upper_bound:
+                is_unique = False
+                break
+        
+        if is_unique:
+            print(f"Unique period found: {period:.2f} days")
+            final_periods.add(period)
+            final_results.append(result)
+
+    return final_results
+
+
 def plot_phase_folded_light_curves(time, flux, results_list):
     for i, result in enumerate(results_list):
         period = result["refined_period"]
         model_flux = result["transit_model"]
-        phase = (time % period) / period
-        plt.figure(figsize=(10, 5))
-        plt.scatter(phase, flux, s=1, label="Flux")
-        plt.plot(phase, model_flux, color="red", label=f"Planet {i+1} Transit Model")
-        plt.xlabel("Phase")
-        plt.ylabel("Normalized Flux")
-        plt.title(f"Phase-Folded Light Curve for Candidate Planet {i+1}")
-        plt.legend()
+        duration = result["duration"]  # Assuming duration is provided in the result
+        phase = ((time % period) / period - 0.5) % 1
+
+        # Find the phase of the minimum flux in the model
+        min_flux_indices = np.where(model_flux == np.min(model_flux))[0]
+        min_flux_phase = np.mean(phase[min_flux_indices])
+
+        # Adjust phase to center the transit
+        phase = (phase - min_flux_phase + 0.5) % 1 - 0.5
+
+        # Calculate the phase range based on the duration of the transit
+        phase_range = duration / period
+
+        # Filter the phase and flux to be within the calculated phase range
+        mask = (phase >= -0.5) & (phase <= 0.5)
+        filtered_phase = phase[mask]
+        filtered_flux = flux[mask]
+        filtered_model_flux = model_flux[mask]
+
+        plt.figure(figsize=(12, 6))
+        plt.scatter(filtered_phase, filtered_flux, s=10, label="Flux", color='blue', alpha=0.6)
+        plt.scatter(filtered_phase, filtered_model_flux, color="orange", label=f"Planet {i+1} Transit Model")
+        plt.xlabel("Phase", fontsize=14)
+        plt.ylabel("Normalized Flux", fontsize=14)
+        plt.title(f"Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
+        plt.yscale("log")
+
+        plt.legend(fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.tight_layout()
         plt.show()
 
-# Summarize results
+def plot_light_curve(time,flux,flux_error):
+    plt.figure(figsize=(10, 6))
+    plt.errorbar(time, flux, yerr=flux_error, fmt='o', color='red', markersize=2)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Normalized Flux")
+    plt.title("Kepler Light Curve")
+    plt.show()
+
 def summarize_results(results_list,stellar_info):
-      print("\nDetected Planet Candidates:")
-      print("-" * 40)
-      for i, result in enumerate(results_list):
+    print("\nDetected Planet Candidates:")
+    print("-" * 40)
+
+    if stellar_info:
+        stellar_radius = stellar_info["stellar_radius"]
+        print(f"Stellar Radius: {stellar_radius} Solar Radii")
+        print(f"Stellar Temperature: {stellar_info['temperature']} K")
+        print("-" * 40)
+
+    for i, result in enumerate(results_list):
             
+            print()
+            print("-" * 40)
             print(f"Candidate {i+1}:") 
             print(f"  Initial Period = {result['candidate_period']:.2f} days")
             print(f"  Refined Period = {result['refined_period']:.2f} days")
@@ -144,24 +244,47 @@ def summarize_results(results_list,stellar_info):
             print(f"  Power = {result['power']:.2f}")
             print("-" * 40)
             if stellar_info:
-                  stellar_radius = stellar_info["stellar_radius"]
-                  depth = result["depth"]
-                  planet_radius = estimate_planet_radius(depth, stellar_radius)
-                  print(f"Best Transit Candidate: Period = {result['refined_period']:.2f} days, Depth = {depth:.2e}")
-                  print(f"Estimated Planet Radius: {planet_radius:.2f} Earth Radii")
+                depth = result["depth"]
+                planet_radius = estimate_planet_radius(depth, stellar_radius)
+                print(f"Best Transit Candidate: Period = {result['refined_period']:.2f} days, Depth = {depth:.2e}")
+                print(f"Estimated Planet Radius: {planet_radius:.3f} Solar Radii")
+                earth_radius_in_terms_of_stellar = 0.009168
+                jupiter_radius_in_terms_of_stellar = 0.10045
+                print(f"Estimated Planet Radius: {planet_radius / earth_radius_in_terms_of_stellar :.3f} Earth Radii")
+                print(f"Estimated Planet Radius: {planet_radius / jupiter_radius_in_terms_of_stellar :.3f} Jupiter Radii")
 
-def run_lomb_scargle_analysis(kepler_dataframe):
+# Find transit peaks (Lomb-Scargle Periodogram)
+def find_transits(time, flux, resolution):
+    
+    preiod_range = (3, 30)
+    period = np.linspace(preiod_range[0], preiod_range[1], resolution)
+    frequency = np.linspace((1/45.),(1/0.007), resolution)
+
+    # First Lomb-Scargle periodogram
+    power_lomb_1 = scipy.signal.lombscargle(time, flux, frequency, precenter=True, normalize=False)
+
+    plt.figure(figsize=(10, 6))
+    plt.plot(period, power_lomb_1, label="First Lomb-Scargle Periodogram")
+    plt.show()
+
+    print('computing second periodogram')
+    # Second Lomb-Scargle periodogram on the power spectrum
+    power_lomb_2 = scipy.signal.lombscargle(frequency, power_lomb_1, period, precenter=True, normalize=False)
+    
+    return period, power_lomb_2
+
+def run_lomb_scargle_analysis(kepler_dataframe,resolution=5000):
       print("Running Lomb-Scargle Periodogram Analysis...")
-      period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"])
+      period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"],resolution)
       
-      # Calculate height parameter as the 99th percentile of the power values
-      height_threshold = np.percentile(lomb2, 99)
+      # Calculate height parameter as the 99th percentile of the power values.
+      height_threshold = np.percentile(lomb2, 98)
       
-      # Find initial peaks to calculate the median period difference
+      # Find initial peaks to calculate the median period difference.
       initial_peaks = find_peaks(lomb2, height=height_threshold)
       initial_peak_pos = period[initial_peaks[0]]
       
-      # Calculate distance parameter as a fraction of the median period difference
+      # Calculate distance parameter as a fraction of the median period difference.
       if len(initial_peak_pos) > 1:
             median_period_diff = np.median(np.diff(initial_peak_pos))
             distance_threshold = max(median_period_diff / 2, 1)  # Ensure distance is at least 1
@@ -175,9 +298,10 @@ def run_lomb_scargle_analysis(kepler_dataframe):
 
       # Visualize spectrum and peaks
       plt.figure(figsize=(10, 6))
-      plt.plot(period, lomb2, label="Lomb-Scargle Power")
-      plt.scatter(peak_pos, lomb2[peaks[0]], color="red", label="Detected Peaks")
+      plt.plot(period, lomb2, label="Lomb-Scargle Periodogram")
+      plt.plot(peak_pos, lomb2[peaks[0]], "x", label="Detected Peaks", color="red")
       plt.xscale("log")
+      plt.yscale("log")
       plt.xlabel("Period (days)")
       plt.ylabel("Power")
       plt.title("Lomb-Scargle Periodogram")
@@ -187,36 +311,33 @@ def run_lomb_scargle_analysis(kepler_dataframe):
       return peak_pos
 
 if __name__ == "__main__":
-      print("Running Kepler Light Curve Analysis...")
-      target = "Kepler-8"
-      kepler_dataframe, stellar_info = fetch_kepler_data_and_stellar_info(target)
-      print(f"Kepler Light Curve Data for {target} Fetched and Normalised")
-      print(f"Stellar Information: {stellar_info}")
+    print("Running Kepler Light Curve Analysis...")
+    target = "Kepler-12"
+    kepler_dataframe, stellar_info = fetch_kepler_data_and_stellar_info(target)
+    print(f"Kepler Light Curve Data for {target} Fetched and Normalised")
+    print(f"Stellar Information: {stellar_info}")
 
-      peak_pos = run_lomb_scargle_analysis(kepler_dataframe)
+    peak_pos = run_lomb_scargle_analysis(kepler_dataframe)
 
-      print("Detected Peaks:")
-      print("-" * 40)
-      print("Period (days)")
-      print("-" * 40)
-      for period in peak_pos:
+    print("Detected Peaks:")
+    print("-" * 40)
+    print("Period (days)")
+    print("-" * 40)
+    for period in peak_pos:
             print(f"{period:.2f}")
-      
-      # Refine peaks using BLS
-      results_list = analyze_peaks_with_bls(
+    
+    # Refine peaks using BLS
+    results_list = analyze_peaks_with_bls(
             kepler_dataframe["time"].values,
             kepler_dataframe["flux"].values,
             kepler_dataframe["error"].values,
             peak_pos
-      )
-      print("BLS Analysis Complete!")
+    )
+    print("BLS Analysis Complete!")
 
-      # Visualize phase-folded light curves
-      #plot_phase_folded_light_curves(kepler_dataframe["time"].values, kepler_dataframe["flux"].values, results_list)
+    # Visualize phase-folded light curves
 
-
-      # Stellar information
-
-      # Summarize results
-      summarize_results(results_list,stellar_info)
+    # Summarize results
+    summarize_results(results_list,stellar_info)
+    plot_phase_folded_light_curves(kepler_dataframe["time"].values, kepler_dataframe["flux"].values, results_list)
 

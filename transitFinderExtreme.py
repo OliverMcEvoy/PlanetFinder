@@ -70,7 +70,7 @@ class ExoplanetDataset(Dataset):
             flux_with_noise = np.array(data['flux_with_noise'])
             detected_count = data['num_detectable_planets'][()]
 
-            # Normalize flux using magnitude
+            # Normalise flux using magnitude
             flux_with_noise /= np.abs(flux_with_noise).max()
 
         return (
@@ -96,22 +96,22 @@ class TransitModel(nn.Module):
     def __init__(self, max_flux_len, max_time_len):
         super(TransitModel, self).__init__()
         self.num_classes = 12  
-        self.flux_input = nn.Linear(max_flux_len, 256)  # Increased units
-        self.time_input = nn.Linear(max_time_len, 256)  # Increased units
+        self.flux_input = nn.Linear(max_flux_len, 256)  
+        self.time_input = nn.Linear(max_time_len, 256)  
         
         self.concat = nn.Sequential(
-            nn.Linear(512, 256),  # Increased units
+            nn.Linear(512, 256), 
             nn.ReLU(),
             BayesianDropout(p=0.3)
         )
         
-        self.bayesian1 = AdvancedBayesianDense(256, 128, activation=nn.ReLU())  # Increased units
+        self.bayesian1 = AdvancedBayesianDense(256, 128, activation=nn.ReLU()) 
         self.bayesian2 = AdvancedBayesianDense(128, 64, activation=nn.ReLU())
-        self.bayesian3 = AdvancedBayesianDense(64, 32, activation=nn.ReLU())  # New layer
+        self.bayesian3 = AdvancedBayesianDense(64, 32, activation=nn.ReLU())  
         
-        self.dropout = BayesianDropout(p=0.3)  # Additional dropout layer
+        self.dropout = BayesianDropout(p=0.3)  
         
-        self.detected_count_output = nn.Linear(32, self.num_classes)  # Use num_classes
+        self.detected_count_output = nn.Linear(32, self.num_classes)  
 
     def forward(self, flux, time, n_samples=10):
         flux_out = self.flux_input(flux)
@@ -122,15 +122,14 @@ class TransitModel(nn.Module):
         x = self.concat(combined)
         x = self.bayesian1(x, n_samples=n_samples)
         x = self.bayesian2(x, n_samples=n_samples)
-        x = self.bayesian3(x, n_samples=n_samples)  # Forward pass through new layer
-        
-        x = self.dropout(x)  # Apply additional dropout
+        x = self.bayesian3(x, n_samples=n_samples) 
+
+        x = self.dropout(x)  
         
         detected_count = self.detected_count_output(x)
-        probabilities = F.softmax(detected_count, dim=-1)  # Softmax to get probabilities
+        probabilities = F.softmax(detected_count, dim=-1) 
         return probabilities
 
-# Early Stopping Mechanism
 class EarlyStopping:
     def __init__(self, patience=5, min_delta=0):
         self.patience = patience
@@ -222,18 +221,9 @@ def load_model(path, device):
     max_flux_len = 26427
     max_time_len = 26427
     model = TransitModel(max_flux_len, max_time_len).to(device)
-    model.load_state_dict(checkpoint['model_state_dict'])  # Correctly load the model state dict
+    model.load_state_dict(checkpoint['model_state_dict']) 
     model.eval()
     return model
-
-def predict_planets(model, flux, time, device, n_samples=5):
-    flux_tensor = torch.tensor(flux, dtype=torch.float32).unsqueeze(0).to(device)
-    time_tensor = torch.tensor(time, dtype=torch.float32).unsqueeze(0).to(device)
-    
-    probabilities = model(flux_tensor, time_tensor, n_samples)
-    
-    planet_counts = torch.argmax(probabilities, dim=-1)  # The most probable class
-    return planet_counts.item(), probabilities.squeeze().cpu().numpy()
 
 # Main Function
 def main(hdf5_path):

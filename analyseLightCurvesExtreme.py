@@ -44,14 +44,14 @@ def plot_light_curves(estimated_planets):
         axs[i].set_title(f'Detectable Planets: {true_num_planets}, Estimated Planets: {estimated_num_planets}', fontsize=12) #Total Planets: {total_planets}, 
 
         # Add probabilities as text
-        prob_text = '\n'.join([f'{j}: {prob:.2%}' for j, prob in enumerate(probabilities)])
-        axs[i].text(0.02, 0.98, prob_text, transform=axs[i].transAxes, fontsize=10, verticalalignment='top')
+        #prob_text = '\n'.join([f'{j}: {prob:.2%}' for j, prob in enumerate(probabilities)])
+        #axs[i].text(0.02, 0.98, prob_text, transform=axs[i].transAxes, fontsize=10, verticalalignment='top')
 
-    plt.tight_layout()
+    #plt.tight_layout()
     plt.show()
 
 def main():
-    num_systems = 3
+    num_systems = 1
     max_planets_per_system = 9
     total_time = 540
     max_len = 26427

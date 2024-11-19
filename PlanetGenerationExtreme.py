@@ -9,13 +9,14 @@ import argparse
 import matplotlib.pyplot as plt
 
 def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclination, time_array):
-    # Convert time array to astropy Time object
+    
+    # Convert time array to astropy Time object, seems to work alright
     times = Time(time_array, format='jd')
     
-    # Calculate mean anomaly
+
     mean_anomaly = 2 * np.pi * (times.jd - transit_midpoint) / period
     
-    # Calculate true anomaly (assuming circular orbit for simplicity)
+    #TODO use eccentric anomaly
     true_anomaly = mean_anomaly
     
     # Calculate position in the orbital plane
@@ -26,7 +27,7 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclina
     z = y * np.sin(inclination)
     y = y * np.cos(inclination)
     
-    # Convert to Cartesian coordinates
+    # Convert to Cartesian coordinates,, maybe work in polar coordinates in further iterations?
     positions = CartesianRepresentation(x * u.au, y * u.au, z * u.au)
     
     # Projected distance on the sky plane
@@ -35,16 +36,17 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclina
     return projected_distance
 
 def calculate_limb_darkened_light_curve(projected_distance, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
-    normalized_distance = projected_distance / star_radius
-    normalized_planet_radius = planet_radius / star_radius
+    normalised_distance = projected_distance / star_radius
+    normalised_planet_radius = planet_radius / star_radius
 
-    light_curve = np.ones_like(normalized_distance)
+    light_curve = np.ones_like(normalised_distance)
 
-    inside_transit = normalized_distance < (1 + normalized_planet_radius)
+    inside_transit = normalised_distance < (1 + normalised_planet_radius)
     
-    valid_normalized_distance = np.clip(normalized_distance, 0, 1)
-    mu = np.sqrt(1 - valid_normalized_distance**2)
+    valid_normalised_distance = np.clip(normalised_distance, 0, 1)
+    mu = np.sqrt(1 - valid_normalised_distance**2)
 
+    #not currently used, might be useful for future parameters
     intensity = 1 - limb_darkening_u1 * (1 - mu) - limb_darkening_u2 * (1 - mu)**2
 
     light_curve[inside_transit] -= (
@@ -74,6 +76,8 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
     flux_with_noise = combined_light_curve + np.random.normal(0, observation_noise, len(time_array))
 
     return time_array, flux_with_noise, combined_light_curve
+
+# Generate random limb darkening values, keeps generating until values work 
 def limb_darken_values():
     u1 = np.random.uniform(0.1, 1)
     u2 = np.random.uniform(0.0, 0.5)
@@ -127,14 +131,11 @@ def process_system(system, snr_threshold, total_time, cadence):
         u1=system['u1'], u2=system['u2'], cadence=cadence
     )
 
-    # Calculate SNR for each planet
     detectable_planets = []
     for planet in system['planets']:
-        # Estimate the transit depth
         planet_radius = planet['rp'] * system['star_radius']
         transit_depth = (planet_radius / system['star_radius'])**2
 
-        # Estimate SNR
         snr = transit_depth / system['observation_noise']
         if snr >= snr_threshold:
             detectable_planets.append(planet)
