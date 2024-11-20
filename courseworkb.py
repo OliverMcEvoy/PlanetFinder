@@ -1,3 +1,4 @@
+import multiprocessing.pool
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -5,8 +6,11 @@ from astropy.timeseries import BoxLeastSquares
 import scipy.signal
 from scipy.signal import find_peaks
 from scipy.signal import savgol_filter
+from scipy.optimize import curve_fit
 from lightkurve import search_lightcurve
+from scipy.optimize import minimize
 import multiprocessing
+from lightkurve.lightcurve import TessLightCurve
 
 def fetch_kepler_data_and_stellar_info(target):
     search_result = search_lightcurve(target, mission="Kepler")
@@ -53,9 +57,9 @@ def fetch_kepler_data_and_stellar_info(target):
     return df, stellar_params
 
 
-def run_bls_analysis(time, flux, error, min_period, max_period, duration_range=(0.01, 1)):
+def run_bls_analysis(time, flux, error, resolution,min_period, max_period, duration_range=(0.01, 1)):
     bls = BoxLeastSquares(time, flux, dy=error)
-    periods = np.linspace(min_period, max_period, 10000)
+    periods = np.linspace(min_period, max_period, 50000)
     durations = np.linspace(duration_range[0], duration_range[1], 100)
     results = bls.power(periods, durations)
 
@@ -72,16 +76,20 @@ def run_bls_analysis(time, flux, error, min_period, max_period, duration_range=(
     if not (np.isfinite(best_period) and np.isfinite(best_duration) and np.isfinite(best_transit_time)):
         raise ValueError("Invalid input detected for BoxLeastSquares.model(). Ensure periods, durations, and transit times are finite.")
 
+    # Check if the power is significant enough to indicate a planet
+    if results.power[max_power_idx] < 0.1:  # Threshold can be adjusted based on requirements
+        print("No significant transit signal detected.")
+        return None, None, None, None, None
+
     # Generate the best transit model
     best_transit_model = bls.model(time, best_period, best_duration, best_transit_time)
     return results, results.power, results.period, best_period, best_transit_model
 
 def estimate_planet_radius(transit_depth, stellar_radius):
-
     planet_radius = np.sqrt(transit_depth) * stellar_radius 
     return planet_radius
 
-def analyze_period(period, time, flux, error, duration_range):
+def analyze_period(period, time, flux, error, resolution,duration_range):
     try:
         print(f"Analyzing period {period:.2f} days...")
 
@@ -94,10 +102,11 @@ def analyze_period(period, time, flux, error, duration_range):
             print(f"Skipping period {period:.2f} days as it's shorter than the maximum transit duration.")
             return None
 
-        results, _, _, best_period, best_transit_model = run_bls_analysis(
+        results, power, periods, best_period, best_transit_model = run_bls_analysis(
             time,
             flux,
             error,
+            resolution,
             min_period=period * 0.9,
             max_period=period * 1.1,
             duration_range=duration_range
@@ -108,19 +117,21 @@ def analyze_period(period, time, flux, error, duration_range):
                 "candidate_period": period,
                 "refined_period": best_period,
                 "transit_model": best_transit_model,
-                "power": max(results.power),
-                "duration": results.duration[np.argmax(results.power)],
-                "depth": results.depth[np.argmax(results.power)],
+                "power": max(power),
+                "duration": results.duration[np.argmax(power)],
+                "depth": results.depth[np.argmax(power)],
             }
-        return None
+        else:
+            print(f"No valid period found for {period:.2f} days.")
+            return None
     except Exception as e:
         return {"error": str(e), "period": period}
 
 
-def analyze_peaks_with_bls(time, flux, error, peak_periods, duration_range=(0.01, 0.1)):
+def analyze_peaks_with_bls(time, flux, error, peak_periods, resolution=10000,duration_range=(0.01, 0.25)):
 
     with multiprocessing.Pool() as pool:
-        results_list = pool.starmap(analyze_period, [(period, time, flux, error, duration_range) for period in peak_periods])
+        results_list = pool.starmap(analyze_period, [(period, time, flux, error,resolution, duration_range,) for period in peak_periods])
     
     # Filter out None results and handle errors
     final_results = []
@@ -134,55 +145,82 @@ def analyze_peaks_with_bls(time, flux, error, peak_periods, duration_range=(0.01
     
     return final_results
 
-def remove_exact_duplicates(results_list, decimal_places=3):
+def remove_exact_duplicates(results_list, duplicates_percentage_threshold=0.05):
     unique_results = []
     unique_periods = set()
     
     for result in results_list:
-        period = round(result["refined_period"], decimal_places)
-        if period not in unique_periods:
+        period = result["refined_period"]
+        is_unique = True
+        for unique_period in unique_periods:
+            lower_bound = (1 - duplicates_percentage_threshold) * unique_period
+            upper_bound = (1 + duplicates_percentage_threshold) * unique_period
+
+
+            if lower_bound < period < upper_bound:
+                is_unique = False
+                break
+        if is_unique:
+            print(f"Adding period {period:.3f} days to the unique results.")
             unique_periods.add(period)
             unique_results.append(result)
     
     return unique_results
 
-def remove_duplicate_periods(results_list, decimal_places=3, percentage_threshold=0.05):
+def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05, percentage_threshold=0.05, power_threshold=0.1):
     # Remove exact duplicates
-    unique_results = remove_exact_duplicates(results_list, decimal_places)
+    unique_results = remove_exact_duplicates(results_list, duplicates_percentage_threshold)
     # Sort results by refined_period
     unique_results = sorted(unique_results, key=lambda x: x["refined_period"])
 
     final_results = []
     final_periods = set()
-    
+    final_powers = []
+
     for result in unique_results:
-        print(f"Checking period {result['refined_period']:.2f} days...")
-        period = round(result["refined_period"], decimal_places)
+        period = result["refined_period"]
+        power = result["power"]
         is_unique = True
         
-        for final_period in final_periods:
+        for i, final_period in enumerate(final_periods):
             ratio = period / final_period
-            rounded_ratio = round(ratio, decimal_places)
-            lower_bound = (1 - percentage_threshold) * rounded_ratio
-            upper_bound = (1 + percentage_threshold) * rounded_ratio
-            
+            lower_bound = (1 - percentage_threshold) * ratio
+            upper_bound = (1 + percentage_threshold) * ratio
+
             if lower_bound < ratio < upper_bound:
-                is_unique = False
-                break
+                final_power = final_powers[i]
+                power_ratio = power / final_power
+                power_lower_bound = 1 - power_threshold
+                power_upper_bound = 1 + power_threshold
+
+                if power_lower_bound < power_ratio < power_upper_bound:
+                    is_unique = False
+                    break
+                # Check combinations of previous powers
+                for j in range(i + 1, len(final_powers)):
+                    combined_power = final_power + final_powers[j]
+                    combined_power_ratio = power / combined_power
+                    if power_lower_bound < combined_power_ratio < power_upper_bound:
+                        is_unique = False
+                        break
+                if not is_unique:
+                    break
         
         if is_unique:
-            print(f"Unique period found: {period:.2f} days")
+            print(f"Adding period {period:.3f} days to the final results.")
             final_periods.add(period)
+            final_powers.append(power)
             final_results.append(result)
 
     return final_results
 
 
-def plot_phase_folded_light_curves(time, flux, results_list):
+def plot_phase_folded_light_curves(kepler_dataframe, results_list):
+    time, flux, error = kepler_dataframe["time"].values, kepler_dataframe["flux"].values, kepler_dataframe["error"].values
     for i, result in enumerate(results_list):
         period = result["refined_period"]
         model_flux = result["transit_model"]
-        duration = result["duration"]  # Assuming duration is provided in the result
+        duration = result["duration"]
         phase = ((time % period) / period - 0.5) % 1
 
         # Find the phase of the minimum flux in the model
@@ -193,24 +231,35 @@ def plot_phase_folded_light_curves(time, flux, results_list):
         phase = (phase - min_flux_phase + 0.5) % 1 - 0.5
 
         # Calculate the phase range based on the duration of the transit
-        phase_range = duration / period
+        phase_range_for_plot = duration / period
 
         # Filter the phase and flux to be within the calculated phase range
-        mask = (phase >= -0.5) & (phase <= 0.5)
+        mask = (phase >= -phase_range_for_plot) & (phase <= phase_range_for_plot)
         filtered_phase = phase[mask]
         filtered_flux = flux[mask]
+        filtered_error = error[mask]
         filtered_model_flux = model_flux[mask]
 
-        plt.figure(figsize=(12, 6))
-        plt.scatter(filtered_phase, filtered_flux, s=10, label="Flux", color='blue', alpha=0.6)
-        plt.scatter(filtered_phase, filtered_model_flux, color="orange", label=f"Planet {i+1} Transit Model")
-        plt.xlabel("Phase", fontsize=14)
-        plt.ylabel("Normalized Flux", fontsize=14)
-        plt.title(f"Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
-        plt.yscale("log")
+        fig, axs = plt.subplots(2, 1, figsize=(10, 12))
 
-        plt.legend(fontsize=12)
-        plt.grid(True, linestyle='--', alpha=0.7)
+        # Plot unfiltered data
+        axs[0].errorbar(phase, flux, yerr=error, fmt='o', color='black', alpha=0.5, label="Unfiltered Flux", linestyle='none')
+        axs[0].errorbar(phase, model_flux, fmt='s', color='red', alpha=0.5, label="Unfiltered Transit Model", linestyle='none')
+        axs[0].set_xlabel("Phase", fontsize=14)
+        axs[0].set_ylabel("Normalized Flux", fontsize=14)
+        axs[0].set_title(f"Unfiltered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
+        axs[0].legend(fontsize=12)
+        axs[0].grid(True) #tmp to assist with debugging
+
+        # Plot filtered data
+        axs[1].errorbar(filtered_phase, filtered_flux, yerr=filtered_error, fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
+        axs[1].errorbar(filtered_phase, filtered_model_flux, fmt='s', color='red', alpha=0.5, label="Filtered Transit Model", linestyle='none', markersize=2)
+        axs[1].set_xlabel("Phase", fontsize=14)
+        axs[1].set_ylabel("Normalized Flux", fontsize=14)
+        axs[1].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
+        axs[1].legend(fontsize=12)
+        axs[1].grid(True) #tmp to assist with debugging
+
         plt.tight_layout()
         plt.show()
 
@@ -253,62 +302,116 @@ def summarize_results(results_list,stellar_info):
                 print(f"Estimated Planet Radius: {planet_radius / earth_radius_in_terms_of_stellar :.3f} Earth Radii")
                 print(f"Estimated Planet Radius: {planet_radius / jupiter_radius_in_terms_of_stellar :.3f} Jupiter Radii")
 
+def compute_lombscargle(args):
+    time, flux, frequency_chunk = args
+    return scipy.signal.lombscargle(time, flux, frequency_chunk, precenter=True, normalize=False)
+
 # Find transit peaks (Lomb-Scargle Periodogram)
 def find_transits(time, flux, resolution):
+    period_range = (1, 100)
+    period = np.linspace(period_range[0], period_range[1], resolution)
+    frequency = np.linspace((1/45.), (1/0.001), resolution)
+
+    # Split frequency array into chunks for parallel processing
+    num_chunks = 8  # Number of processes
+    frequency_chunks = np.array_split(frequency, num_chunks)
+    period_chunks = np.array_split(period, num_chunks)
+
+    # Use multiprocessing to compute the first Lomb-Scargle periodogram
+    with multiprocessing.Pool() as pool:
+        power_lomb_1_chunks = pool.map(compute_lombscargle, [(time, flux, chunk) for chunk in frequency_chunks])
     
-    preiod_range = (3, 30)
-    period = np.linspace(preiod_range[0], preiod_range[1], resolution)
-    frequency = np.linspace((1/45.),(1/0.007), resolution)
+    # Combine the results from each chunk
+    power_lomb_1 = np.concatenate(power_lomb_1_chunks)
 
-    # First Lomb-Scargle periodogram
-    power_lomb_1 = scipy.signal.lombscargle(time, flux, frequency, precenter=True, normalize=False)
-
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(6, 6))
     plt.plot(period, power_lomb_1, label="First Lomb-Scargle Periodogram")
     plt.show()
 
     print('computing second periodogram')
     # Second Lomb-Scargle periodogram on the power spectrum
-    power_lomb_2 = scipy.signal.lombscargle(frequency, power_lomb_1, period, precenter=True, normalize=False)
-    
+    with multiprocessing.Pool() as pool:
+        power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
+
+    power_lomb_2 = np.concatenate(power_lomb_2_chunks)
+
     return period, power_lomb_2
 
-def run_lomb_scargle_analysis(kepler_dataframe,resolution=5000):
-      print("Running Lomb-Scargle Periodogram Analysis...")
-      period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"],resolution)
-      
-      # Calculate height parameter as the 99th percentile of the power values.
-      height_threshold = np.percentile(lomb2, 98)
-      
-      # Find initial peaks to calculate the median period difference.
-      initial_peaks = find_peaks(lomb2, height=height_threshold)
-      initial_peak_pos = period[initial_peaks[0]]
-      
-      # Calculate distance parameter as a fraction of the median period difference.
-      if len(initial_peak_pos) > 1:
-            median_period_diff = np.median(np.diff(initial_peak_pos))
-            distance_threshold = max(median_period_diff / 2, 1)  # Ensure distance is at least 1
-      else:
-            distance_threshold = 50  # Default value if not enough peaks are found
-      
-      # Adjust the height and distance parameters to reduce the number of peaks
-      peaks = find_peaks(lomb2, height=height_threshold, distance=distance_threshold)
-      peak_pos = period[peaks[0]]
-      print("Lomb-Scargle Periodogram analysis done")
+def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
+    print("Running Lomb-Scargle Periodogram Analysis...")
+    period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution)
+    
+    # Compute the gradient and the second derivative (gradient of the gradient)
+    gradient = np.gradient(lomb2, period)
+    second_derivative = np.gradient(gradient, period)
+    
+    # Plot the gradient
+    plt.figure(figsize=(10, 6))
+    plt.plot(period, gradient, label="Gradient of Power")
+    plt.axhline(0, color='gray', linestyle='--', alpha=0.7)
+    plt.xlabel("Period (days)")
+    plt.ylabel("Gradient")
+    plt.title("Gradient of Lomb-Scargle Power vs Period")
+    plt.legend()
+    plt.show()
 
-      # Visualize spectrum and peaks
-      plt.figure(figsize=(10, 6))
-      plt.plot(period, lomb2, label="Lomb-Scargle Periodogram")
-      plt.plot(peak_pos, lomb2[peaks[0]], "x", label="Detected Peaks", color="red")
-      plt.xscale("log")
-      plt.yscale("log")
-      plt.xlabel("Period (days)")
-      plt.ylabel("Power")
-      plt.title("Lomb-Scargle Periodogram")
-      plt.legend()
-      plt.show()
+    # Plot the second derivative
+    plt.figure(figsize=(10, 6))
+    plt.plot(period, second_derivative, label="Second Derivative of Power")
+    plt.axhline(0, color='gray', linestyle='--', alpha=0.7)
+    plt.xlabel("Period (days)")
+    plt.ylabel("Second Derivative")
+    plt.title("Second Derivative of Lomb-Scargle Power vs Period")
+    plt.legend()
+    plt.show()
+    
+    # Determine regions where both gradient and second derivative are small
+    gradient_threshold = 1e-9
+    second_derivative_threshold = 1e-10
+    smooth_region_indices = np.where(
+        (np.abs(gradient) < gradient_threshold) &
+        (np.abs(second_derivative) < second_derivative_threshold)
+    )[0]
 
-      return peak_pos
+    # Ensure there are multiple consecutive points in the smooth region
+    if len(smooth_region_indices) > 1:
+        smooth_start_index = smooth_region_indices[0]  # Start of smooth region
+        period_threshold = period[smooth_start_index]
+    else:
+        period_threshold = np.min(period)  # Fallback if no smooth region is found
+
+    print(f"Excluding peaks before period = {period_threshold:.2f} days")
+    
+    # Calculate height parameter as the 99th percentile of the power values
+    height_threshold = np.percentile(lomb2, 97)
+    
+    # Find initial peaks
+    peaks = find_peaks(lomb2, height=height_threshold)
+    peak_indices = peaks[0]  # Indices of peaks
+    peak_pos = period[peak_indices]
+    peak_powers = lomb2[peak_indices]
+    
+    # Exclude peaks in the low-period region based on the threshold
+    valid_peaks = peak_pos >= period_threshold
+    peak_pos = peak_pos[valid_peaks]
+    peak_powers = peak_powers[valid_peaks]
+    
+    print("Lomb-Scargle Periodogram analysis done")
+
+    # Visualize the Lomb-Scargle periodogram and detected peaks
+    plt.figure(figsize=(10, 6))
+    plt.plot(period, lomb2, label="Lomb-Scargle Periodogram")
+    plt.plot(peak_pos, peak_powers, "x", label="Detected Peaks", color="red")
+    plt.xlabel("Period (days)")
+    plt.ylabel("Power")
+    plt.title("Lomb-Scargle Periodogram")
+    plt.legend()
+    plt.show()
+
+    return peak_pos
+
+
+
 
 if __name__ == "__main__":
     print("Running Kepler Light Curve Analysis...")
