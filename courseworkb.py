@@ -145,12 +145,17 @@ def analyze_peaks_with_bls(time, flux, error, peak_periods, resolution=10000,dur
     
     return final_results
 
-def remove_exact_duplicates(results_list, duplicates_percentage_threshold=0.05):
+def remove_exact_duplicates(results_list, duplicates_percentage_threshold=0.05, complex_result_list = True):
     unique_results = []
     unique_periods = set()
     
     for result in results_list:
-        period = result["refined_period"]
+        
+        if complex_result_list:
+            period = result["refined_period"]
+        else:
+            period = result
+            
         is_unique = True
         for unique_period in unique_periods:
             lower_bound = (1 - duplicates_percentage_threshold) * unique_period
@@ -308,9 +313,9 @@ def compute_lombscargle(args):
 
 # Find transit peaks (Lomb-Scargle Periodogram)
 def find_transits(time, flux, resolution):
-    period_range = (1, 100)
+    period_range = (1, 30)
     period = np.linspace(period_range[0], period_range[1], resolution)
-    frequency = np.linspace((1/45.), (1/0.001), resolution)
+    frequency = np.linspace((1/45.), (1/0.005), resolution)
 
     # Split frequency array into chunks for parallel processing
     num_chunks = 8  # Number of processes
@@ -345,10 +350,24 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
     gradient = np.gradient(lomb2, period)
     second_derivative = np.gradient(gradient, period)
     
+    # Calculate rolling mean and standard deviation of the gradient
+    window_size = 50  # Adjust window size as needed
+    rolling_std = pd.Series(gradient).rolling(window=window_size).std().fillna(0)
+    
+    # Find the point where the gradient stabilizes
+    stabilization_index = np.argmax(rolling_std < np.mean(rolling_std))
+    gradient_threshold = np.abs(gradient[stabilization_index])
+    
+    # Determine the second derivative threshold algorithmically
+    second_derivative_threshold = np.mean(np.abs(second_derivative)) + 2 * np.std(np.abs(second_derivative))
+    
+    print(f"Gradient Threshold: {gradient_threshold:.2e}, Second Derivative Threshold: {second_derivative_threshold:.2e}")
+
     # Plot the gradient
     plt.figure(figsize=(10, 6))
     plt.plot(period, gradient, label="Gradient of Power")
     plt.axhline(0, color='gray', linestyle='--', alpha=0.7)
+    plt.axhline(gradient_threshold, color='red', linestyle='--', label='Gradient Threshold')
     plt.xlabel("Period (days)")
     plt.ylabel("Gradient")
     plt.title("Gradient of Lomb-Scargle Power vs Period")
@@ -366,8 +385,6 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
     plt.show()
     
     # Determine regions where both gradient and second derivative are small
-    gradient_threshold = 1e-9
-    second_derivative_threshold = 1e-10
     smooth_region_indices = np.where(
         (np.abs(gradient) < gradient_threshold) &
         (np.abs(second_derivative) < second_derivative_threshold)
@@ -382,14 +399,15 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
 
     print(f"Excluding peaks before period = {period_threshold:.2f} days")
     
-    # Calculate height parameter as the 99th percentile of the power values
-    height_threshold = np.percentile(lomb2, 97)
+    # Determine peak detection parameters algorithmically
+    height = np.mean(lomb2) + 2 * np.std(lomb2)
+    distance = resolution // 10
+    prominence = np.mean(lomb2) + np.std(lomb2)
     
-    # Find initial peaks
-    peaks = find_peaks(lomb2, height=height_threshold)
-    peak_indices = peaks[0]  # Indices of peaks
-    peak_pos = period[peak_indices]
-    peak_powers = lomb2[peak_indices]
+    # Find initial peaks using scipy's find_peaks with algorithmically determined parameters
+    peaks, _ = find_peaks(lomb2, height=height, distance=distance, prominence=prominence)
+    peak_pos = period[peaks]
+    peak_powers = lomb2[peaks]
     
     # Exclude peaks in the low-period region based on the threshold
     valid_peaks = peak_pos >= period_threshold
@@ -409,7 +427,6 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
     plt.show()
 
     return peak_pos
-
 
 
 

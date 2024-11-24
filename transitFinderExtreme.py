@@ -4,53 +4,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset, TensorDataset
-from sklearn.metrics import f1_score
-from torch.utils.tensorboard import SummaryWriter  # Import TensorBoard
+from torch.utils.data import DataLoader, Dataset
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 
-# Bayesian Dropout Layer
-class BayesianDropout(nn.Module):
-    def __init__(self, p=0.1):
-        super(BayesianDropout, self).__init__()
-        self.p = p
+from torch.utils.tensorboard import SummaryWriter
 
-    def forward(self, x):
-        return F.dropout(x, p=self.p, training=True)
-
-# Advanced Bayesian Dense Layer
-class AdvancedBayesianDense(nn.Module):
-    def __init__(self, in_features, out_features, activation=None):
-        super(AdvancedBayesianDense, self).__init__()
-        self.weight_mean = nn.Parameter(torch.randn(out_features, in_features))
-        self.weight_log_std = nn.Parameter(torch.randn(out_features, in_features))
-        self.bias_mean = nn.Parameter(torch.randn(out_features))
-        self.bias_log_std = nn.Parameter(torch.randn(out_features))
-        self.activation = activation
-        self.dropout = BayesianDropout(p=0.2)
-
-    def forward(self, x, n_samples=5):
-        weights = []
-        biases = []
-        for _ in range(n_samples):
-            weight = self.weight_mean + torch.exp(self.weight_log_std) * torch.randn_like(self.weight_mean)
-            bias = self.bias_mean + torch.exp(self.bias_log_std) * torch.randn_like(self.bias_mean)
-            weights.append(weight)
-            biases.append(bias)
-        
-        out_samples = [self.dropout(F.linear(x, weight, bias)) for weight, bias in zip(weights, biases)]
-        out = torch.mean(torch.stack(out_samples), dim=0)
-        
-        if self.activation:
-            out = self.activation(out)
-        
-        return out
-
-#Lazy loading dataset
+# Lazy loading dataset
 class ExoplanetDataset(Dataset):
     def __init__(self, hdf5_path):
         self.hdf5_path = hdf5_path
         with h5py.File(hdf5_path, 'r') as f:
-            # Pre-load metadata.
             self.keys = [
                 f"{iteration}/{system}"
                 for iteration in f.keys()
@@ -64,14 +27,13 @@ class ExoplanetDataset(Dataset):
         key = self.keys[idx]
         with h5py.File(self.hdf5_path, 'r') as f:
             data = f[key]
-
-            # Load data lazily
             time = np.array(data['time'])
             flux_with_noise = np.array(data['flux_with_noise'])
             detected_count = data['num_detectable_planets'][()]
 
-            # Normalise flux using magnitude
-            flux_with_noise /= np.abs(flux_with_noise).max()
+            median_flux = np.median(flux_with_noise)
+            mad = np.median(np.abs(flux_with_noise - median_flux))
+            flux_with_noise = (flux_with_noise - median_flux) / mad
 
         return (
             torch.tensor(flux_with_noise, dtype=torch.float32),
@@ -91,43 +53,22 @@ def collate_fn(batch):
 
     return flux_with_noise_tensor, time_tensor, detected_count_tensor
 
-# Define the Complex Bayesian Neural Network Model
+# Define the LSTM-based Model
 class TransitModel(nn.Module):
-    def __init__(self, max_flux_len, max_time_len):
+    def __init__(self, input_size, hidden_size, num_layers, num_classes):
         super(TransitModel, self).__init__()
-        self.num_classes = 12  
-        self.flux_input = nn.Linear(max_flux_len, 256)  
-        self.time_input = nn.Linear(max_time_len, 256)  
-        
-        self.concat = nn.Sequential(
-            nn.Linear(512, 256), 
-            nn.ReLU(),
-            BayesianDropout(p=0.3)
-        )
-        
-        self.bayesian1 = AdvancedBayesianDense(256, 128, activation=nn.ReLU()) 
-        self.bayesian2 = AdvancedBayesianDense(128, 64, activation=nn.ReLU())
-        self.bayesian3 = AdvancedBayesianDense(64, 32, activation=nn.ReLU())  
-        
-        self.dropout = BayesianDropout(p=0.3)  
-        
-        self.detected_count_output = nn.Linear(32, self.num_classes)  
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, num_classes)
 
-    def forward(self, flux, time, n_samples=10):
-        flux_out = self.flux_input(flux)
-        time_out = self.time_input(time)
-        
-        combined = torch.cat((flux_out, time_out), dim=-1)
-        
-        x = self.concat(combined)
-        x = self.bayesian1(x, n_samples=n_samples)
-        x = self.bayesian2(x, n_samples=n_samples)
-        x = self.bayesian3(x, n_samples=n_samples) 
-
-        x = self.dropout(x)  
-        
-        detected_count = self.detected_count_output(x)
-        probabilities = F.softmax(detected_count, dim=-1) 
+    def forward(self, flux, time):
+        combined = torch.cat((flux.unsqueeze(-1), time.unsqueeze(-1)), dim=-1)
+        h0 = torch.zeros(self.num_layers, combined.size(0), self.hidden_size).to(combined.device)
+        c0 = torch.zeros(self.num_layers, combined.size(0), self.hidden_size).to(combined.device)
+        out, _ = self.lstm(combined, (h0, c0))
+        out = self.fc(out[:, -1, :])
+        probabilities = F.softmax(out, dim=-1)
         return probabilities
 
 class EarlyStopping:
@@ -155,10 +96,10 @@ def train_model(model, hdf5_path, device, epochs=3, batch_size=1, patience=5):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
-    criterion = nn.CrossEntropyLoss()  # Multi-class classification loss
+    criterion = nn.CrossEntropyLoss()
     early_stopping = EarlyStopping(patience=patience)
 
-    writer = SummaryWriter()  # Initialize TensorBoard writer
+    writer = SummaryWriter()
     model.train()
 
     for epoch in range(epochs):
@@ -174,74 +115,69 @@ def train_model(model, hdf5_path, device, epochs=3, batch_size=1, patience=5):
                 detected_count.to(device),
             )
 
-            # Forward pass
             optimizer.zero_grad()
-            probabilities = model(flux_with_noise, time, n_samples=5)
+            probabilities = model(flux_with_noise, time)
             loss = criterion(probabilities, detected_count)
             loss.backward()
             optimizer.step()
 
-            # Track metrics
             epoch_loss += loss.item()
             batch_count += 1
             preds = torch.argmax(probabilities, dim=-1)
             all_preds.extend(preds.cpu().numpy())
             all_labels.extend(detected_count.cpu().numpy())
 
-            # Log batch loss to TensorBoard
             writer.add_scalar('Loss/batch', loss.item(), batch_count)
 
             print(f"Epoch {epoch + 1}/{epochs}, Batch {batch_count}, Loss: {loss.item():.4f}", end='\r')
 
         epoch_loss /= batch_count
         f1 = f1_score(all_labels, all_preds, average='weighted')
-        print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {epoch_loss:.4f}, F1 Score: {f1:.4f}")
+        accuracy = accuracy_score(all_labels, all_preds)
+        precision = precision_score(all_labels, all_preds, average='weighted')
+        recall = recall_score(all_labels, all_preds, average='weighted')
+
+        writer.add_scalar('Loss/epoch', epoch_loss, epoch)
+        writer.add_scalar('F1/epoch', f1, epoch)
+        writer.add_scalar('Accuracy/epoch', accuracy, epoch)
+        writer.add_scalar('Precision/epoch', precision, epoch)
+        writer.add_scalar('Recall/epoch', recall, epoch)
+
+        print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {epoch_loss:.4f}, F1 Score: {f1:.4f}, Accuracy: {accuracy:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
         print()
 
-        # Log epoch metrics to TensorBoard
-        writer.add_scalar('Loss/train', epoch_loss, epoch)
-        writer.add_scalar('F1_Score/train', f1, epoch)
+    writer.close()
 
-        if early_stopping(epoch_loss):
-            print("Early stopping")
-            break
-
-    writer.close()  # Close the TensorBoard writer
-
-# Function to save the model and input dimensions
 def save_model(model, path):
     torch.save({
         'model_state_dict': model.state_dict(),
     }, path)
     print(f"Model saved to {path}")
 
-# Function to load the model and input dimensions
 def load_model(path, device):
     checkpoint = torch.load(path, map_location=device)
-    max_flux_len = 26427
-    max_time_len = 26427
-    model = TransitModel(max_flux_len, max_time_len).to(device)
-    model.load_state_dict(checkpoint['model_state_dict']) 
+    input_size = 2
+    hidden_size = 128
+    num_layers = 2
+    num_classes = 12
+    model = TransitModel(input_size, hidden_size, num_layers, num_classes).to(device)
+    model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
     return model
 
-# Main Function
 def main(hdf5_path):
-    max_len = 26427
-    print(f"Max length: {max_len}")
-
+    input_size = 2
+    hidden_size = 128
+    num_layers = 2
+    num_classes = 12
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if torch.cuda.is_available():
         print("CUDA is available")
 
-    # Initialize and train the model
-    model = TransitModel(max_flux_len=max_len, max_time_len=max_len).to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=10, batch_size=128, patience=10)
+    model = TransitModel(input_size, hidden_size, num_layers, num_classes).to(device)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=10, batch_size=8, patience=3)
+    save_model(model, "theBigModeldifferntModel.pth")
 
-    # Save the trained model
-    save_model(model, "theBigModel.pth")
-
-# Call main function
 if __name__ == "__main__":
     hdf5_path = "thisIsABigFile.hdf5"
     main(hdf5_path)
