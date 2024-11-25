@@ -63,7 +63,7 @@ def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
     return df, stellar_params
 
 
-def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target):
+def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_type = 'savgol',randomise = False):
     search_result = search_lightcurve(target, mission="Kepler")
     lc_collection = search_result.download_all()
 
@@ -78,14 +78,22 @@ def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target):
         tmpflux = lc_data.flux.value
         tmperror = lc_data.flux_err.value
 
+        if randomise:
+            np.random.shuffle(tmpflux)
+
+
         time = np.append(time, lc_data.time.value)
         flux = np.append(flux, lc_data.flux.value)
         error = np.append(error, lc_data.flux_err.value)
 
     array_size = len(flux)
-    window_length = min(501, array_size - (array_size % 2 == 0))
+    window_length = min(51, array_size - (array_size % 2 == 0))
 
-    interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
+    if filter_type == 'savgol':
+        interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
+    elif filter_type == 'medfilt':
+        flux = flux.astype(np.float64) 
+        interp_savgol = medfilt(flux, kernel_size=51)
 
     flux = flux/interp_savgol
     error = error/interp_savgol
@@ -378,7 +386,7 @@ def find_transits(time, flux, resolution,period_range):
     frequency = np.linspace((1/frequency_range[1]), (1/frequency_range[0]), resolution)
 
     # Split frequency array into chunks for parallel processing
-    num_chunks = 8  # Number of processes
+    num_chunks = 12  # Number of processes
     frequency_chunks = np.array_split(frequency, num_chunks)
     period_chunks = np.array_split(period, num_chunks)
 
