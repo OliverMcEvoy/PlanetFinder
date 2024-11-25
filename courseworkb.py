@@ -10,9 +10,10 @@ from scipy.optimize import curve_fit
 from lightkurve import search_lightcurve
 from scipy.optimize import minimize
 import multiprocessing
+from scipy.signal  import medfilt
 from lightkurve.lightcurve import TessLightCurve
 
-def fetch_kepler_data_and_stellar_info(target):
+def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
     search_result = search_lightcurve(target, mission="Kepler")
     lc_collection = search_result.download_all()
 
@@ -28,16 +29,66 @@ def fetch_kepler_data_and_stellar_info(target):
         tmperror = lc_data.flux_err.value
 
         array_size = len(tmpflux)
-        window_length = min(501, array_size - (array_size % 2 == 0))
+        window_length = min(51, array_size - (array_size % 2 == 0))
 
         if window_length > 2:
-            interp_savgol = savgol_filter(tmpflux, window_length=window_length, polyorder=3)
+            if filter_type == 'savgol':
+                normaliser = savgol_filter(tmpflux, window_length=window_length, polyorder=3)
+            elif filter_type == 'medfilt':
+                tmpflux = tmpflux.astype(np.float64)  # Convert to f64 for medfilt
+                normaliser = medfilt(tmpflux, kernel_size=51)
         else:
-            interp_savgol = np.ones_like(tmpflux)
+            normaliser = np.ones_like(tmpflux)
+        
 
         time = np.append(time, tmptime)
-        flux = np.append(flux, tmpflux / interp_savgol)
-        error = np.append(error, tmperror / interp_savgol)
+        flux = np.append(flux, tmpflux / normaliser)
+        error = np.append(error, tmperror / normaliser)
+
+    df = pd.DataFrame({"time": time, "flux": flux, "error": error})
+    mean_flux = np.mean(flux)
+    std_flux = np.std(flux)
+    df = df[(df["flux"] <= mean_flux + 3 * std_flux) & (df["flux"] >= mean_flux - 8 * std_flux)]
+
+    # Fetch stellar information from the light curve metadata
+    if len(lc_collection) > 0:
+        star_data = lc_collection[0].meta
+        stellar_params = {
+            "stellar_radius": star_data.get("RADIUS", np.nan),  # Stellar radius in solar radii
+            "temperature": star_data.get("TEFF", np.nan),   # Stellar effective temperature
+        }
+    else:
+        stellar_params = None
+
+    return df, stellar_params
+
+
+def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target):
+    search_result = search_lightcurve(target, mission="Kepler")
+    lc_collection = search_result.download_all()
+
+    time, flux, error = np.array([]), np.array([]), np.array([])
+    quart = 0
+    for lc in lc_collection:
+        print(f"Downloading light curve segment {quart + 1} of {len(lc_collection)}", end='\r')
+        quart += 1
+
+        lc_data = lc.remove_nans()
+        tmptime = lc_data.time.value
+        tmpflux = lc_data.flux.value
+        tmperror = lc_data.flux_err.value
+
+        time = np.append(time, lc_data.time.value)
+        flux = np.append(flux, lc_data.flux.value)
+        error = np.append(error, lc_data.flux_err.value)
+
+    array_size = len(flux)
+    window_length = min(501, array_size - (array_size % 2 == 0))
+
+    interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
+
+    flux = flux/interp_savgol
+    error = error/interp_savgol
 
     df = pd.DataFrame({"time": time, "flux": flux, "error": error})
     mean_flux = np.mean(flux)
@@ -59,7 +110,7 @@ def fetch_kepler_data_and_stellar_info(target):
 
 def run_bls_analysis(time, flux, error, resolution,min_period, max_period, duration_range=(0.01, 1)):
     bls = BoxLeastSquares(time, flux, dy=error)
-    periods = np.linspace(min_period, max_period, 50000)
+    periods = np.linspace(min_period, max_period, resolution)
     durations = np.linspace(duration_range[0], duration_range[1], 100)
     results = bls.power(periods, durations)
 
@@ -312,10 +363,19 @@ def compute_lombscargle(args):
     return scipy.signal.lombscargle(time, flux, frequency_chunk, precenter=True, normalize=False)
 
 # Find transit peaks (Lomb-Scargle Periodogram)
-def find_transits(time, flux, resolution):
-    period_range = (1, 30)
+def find_transits(time, flux, resolution,period_range):
+    '''
+    @params
+    time: array -> array containing the time values of the kepler dataframe.
+    flux: array -> array containing the corrosponding flux values for each time.
+    resolution: int -> the number of points to use in the periodogram.
+
+    find the transit peaks, the expected inputs 
+    '''
     period = np.linspace(period_range[0], period_range[1], resolution)
-    frequency = np.linspace((1/45.), (1/0.005), resolution)
+
+    frequency_range = (time[1]-time[0], time[len(time)] -time[0])
+    frequency = np.linspace((1/frequency_range[1]), (1/frequency_range[0]), resolution)
 
     # Split frequency array into chunks for parallel processing
     num_chunks = 8  # Number of processes
@@ -342,9 +402,9 @@ def find_transits(time, flux, resolution):
 
     return period, power_lomb_2
 
-def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
+def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30)):
     print("Running Lomb-Scargle Periodogram Analysis...")
-    period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution)
+    period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range)
     
     # Compute the gradient and the second derivative (gradient of the gradient)
     gradient = np.gradient(lomb2, period)
@@ -401,7 +461,7 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000):
     
     # Determine peak detection parameters algorithmically
     height = np.mean(lomb2) + 2 * np.std(lomb2)
-    distance = resolution // 10
+    distance = resolution // 100
     prominence = np.mean(lomb2) + np.std(lomb2)
     
     # Find initial peaks using scipy's find_peaks with algorithmically determined parameters
