@@ -79,6 +79,8 @@ def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_typ
         tmperror = lc_data.flux_err.value
 
 
+        if randomise:
+            np.random.shuffle(tmpflux)
 
         time = np.append(time, lc_data.time.value)
         flux = np.append(flux, lc_data.flux.value)
@@ -96,8 +98,6 @@ def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_typ
     flux = flux/interp_savgol
     error = error/interp_savgol
 
-    if randomise:
-        flux = np.random.shuffle(flux)
 
     df = pd.DataFrame({"time": time, "flux": flux, "error": error})
     mean_flux = np.mean(flux)
@@ -408,11 +408,13 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
     with multiprocessing.Pool() as pool:
         power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
 
-    power_lomb_2 = np.concatenate(power_lomb_2_chunks)
+    power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
 
     if list_of_random_lightcurves:
 
         list_of_random_lightcurves_lombed = []
+        list_of_difference_between_rand_and_regular = []
+        power_lomb_difference_squared = np.zeros_like(power_lomb_2_regular)
 
         print('List of random light curves present, computing random light curves')
         i =0
@@ -429,17 +431,23 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
                 power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
             power_lomb_2 = np.concatenate(power_lomb_2_chunks)
             list_of_random_lightcurves_lombed.append(power_lomb_2)
-
+            difference_squared = (power_lomb_2_regular-power_lomb_2)**2
+            list_of_difference_between_rand_and_regular.append(difference_squared)
+            power_lomb_difference_squared += difference_squared
             i+=1
 
         list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
+
+        plt.figure(figsize=(12, 6))
+        plt.title("Random Light Curves Lomb-Scargle Periodogram difference squared")
+        plt.plot(period, power_lomb_difference_squared, label="Random Light Curves")
 
         plt.figure(figsize=(12, 6))
         plt.title("Random Light Curves Lomb-Scargle Periodogram")
         plt.plot(period, list_of_random_lightcurves_lombed_averaged, label="Random Light Curves")
         plt.show()
 
-        power_lomb_2 = power_lomb_2 - list_of_random_lightcurves_lombed_averaged
+        power_lomb_2 = power_lomb_2_regular - list_of_random_lightcurves_lombed_averaged
 
         plt.figure(figsize=(12, 6))
         plt.title("Random Light Curves Subtracted Lomb-Scargle Periodogram")
@@ -447,7 +455,7 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
         plt.show()
 
 
-    return period, power_lomb_2
+    return period, power_lomb_difference_squared
 
 def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False):
     print("Running Lomb-Scargle Periodogram Analysis...")
