@@ -41,7 +41,6 @@ class ExoplanetDataset(Dataset):
             torch.tensor(detected_count, dtype=torch.long),
         )
 
-# Custom collate function
 def collate_fn(batch):
     flux_with_noise = [item[0] for item in batch]
     time = [item[1] for item in batch]
@@ -53,7 +52,6 @@ def collate_fn(batch):
 
     return flux_with_noise_tensor, time_tensor, detected_count_tensor
 
-# Define the LSTM-based Model
 class TransitModel(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, num_classes):
         super(TransitModel, self).__init__()
