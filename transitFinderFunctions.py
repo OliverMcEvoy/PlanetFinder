@@ -2,6 +2,7 @@ import multiprocessing.pool
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from astropy.io import fits
 from astropy.timeseries import BoxLeastSquares
 import scipy.signal
 from scipy.signal import find_peaks
@@ -12,6 +13,7 @@ from scipy.optimize import minimize
 import multiprocessing
 from scipy.signal  import medfilt
 from lightkurve.lightcurve import TessLightCurve
+import glob
 
 def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
     search_result = search_lightcurve(target, mission="Kepler")
@@ -61,6 +63,61 @@ def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
         stellar_params = None
 
     return df, stellar_params
+
+def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
+    '''
+    Function to load data from multiple fits files in a folder
+    @params
+    FolderPath: str -> the path to the folder containing the fits files
+    @returns
+    time: array -> array containing the time values of the kepler dataframe.
+    flux: array -> array containing the corresponding flux values for each time.
+    error: array -> array containing the error values for each flux value.
+    '''
+    time, flux, error = np.array([]), np.array([]), np.array([])
+    for lcfile in glob.glob(FolderPath + '/*.fits'):
+        with fits.open(lcfile) as lc:
+            lc_data = lc[1].data  # Assuming the data is in the first extension
+            tmptime = np.array(lc_data['TIME'])
+            tmpflux = np.array(lc_data['PDCSAP_FLUX'])
+            tmperror = np.array(lc_data['PDCSAP_FLUX_ERR'])
+
+            print(len(tmptime), len(tmpflux), len(tmperror))
+
+
+            # Remove NaNs
+            mask = ~np.isnan(tmpflux) & ~np.isnan(tmperror)
+            tmptime = tmptime[mask]
+            tmpflux = tmpflux[mask]
+            tmperror = tmperror[mask]
+
+            if randomise:
+                np.random.shuffle(tmpflux)
+
+            time = np.append(time, tmptime)
+            flux = np.append(flux, tmpflux)
+            error = np.append(error, tmperror)
+    
+    array_size = len(flux)
+    window_length = min(51, array_size - (array_size % 2 == 0))
+
+    if filter_type == 'savgol':
+        interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
+    elif filter_type == 'medfilt':
+        flux = flux.astype(np.float64) 
+        interp_savgol = medfilt(flux, kernel_size=51)
+
+    flux = flux / interp_savgol
+    error = error / interp_savgol
+
+
+    # Store the data in a dataframe.
+    df = pd.DataFrame({"time": time, "flux": flux, "error": error})
+    mean_flux = np.mean(flux)
+    std_flux = np.std(flux)
+    df = df[(df["flux"] <= mean_flux + 2 * std_flux) & (df["flux"] >= mean_flux - 8 * std_flux)]
+    
+    return df 
 
 
 def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_type = 'savgol',randomise = False):
@@ -515,9 +572,9 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     print(f"Excluding peaks before period = {period_threshold:.2f} days")
     
     # Determine peak detection parameters algorithmically
-    height = np.mean(lomb2) + 2 * np.std(lomb2)
-    distance = resolution // 100
-    prominence = np.mean(lomb2) + 5 * np.std(lomb2)
+    height = np.mean(lomb2) + 1 * np.std(lomb2)
+    distance = resolution // 1000
+    prominence = np.mean(lomb2) + 1 * np.std(lomb2)
     
     # Find initial peaks using scipy's find_peaks with algorithmically determined parameters
     peaks, _ = find_peaks(lomb2, height=height, distance=distance, prominence=prominence)
