@@ -84,15 +84,15 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
 
             print(len(tmptime), len(tmpflux), len(tmperror))
 
-
             # Remove NaNs
             mask = ~np.isnan(tmpflux) & ~np.isnan(tmperror)
             tmptime = tmptime[mask]
             tmpflux = tmpflux[mask]
             tmperror = tmperror[mask]
 
+
             if randomise:
-                np.random.shuffle(tmpflux)
+                np.random.shuffle(tmptime)
 
             time = np.append(time, tmptime)
             flux = np.append(flux, tmpflux)
@@ -100,6 +100,7 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
     
     array_size = len(flux)
     window_length = min(51, array_size - (array_size % 2 == 0))
+
 
     if filter_type == 'savgol':
         interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
@@ -466,6 +467,10 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
         power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
 
     power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
+
+    plt.figure(figsize=(12, 6))
+    plt.title("Second Lomb-Scargle Periodogram")
+    plt.plot(period, power_lomb_2_regular, label="Second Lomb-Scargle Periodogram")
 
     if list_of_random_lightcurves:
 
