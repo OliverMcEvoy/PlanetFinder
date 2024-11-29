@@ -516,12 +516,121 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
         plt.plot(period, power_lomb_2, label="Random Light Curves Subtracted")
         plt.show()
 
+    else:
+        power_lomb_2 = power_lomb_2_regular
 
-    return period, power_lomb_difference_squared
 
-def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False):
+    return period, power_lomb_2
+
+def find_transits_adjusted(time, flux, resolution, period_range, list_of_random_lightcurves):
+    '''
+    @params
+    time: array -> array containing the time values of the kepler dataframe.
+    flux: array -> array containing the corresponding flux values for each time.
+    resolution: int -> the number of points to use in the periodogram.
+
+    find the transit peaks, the expected inputs 
+    '''
+    period = np.linspace(period_range[0], period_range[1], resolution)
+
+    frequency_range = (time[1] - time[0], time[len(time)] - time[0])
+    frequency = np.linspace((1 / frequency_range[1]), (1 / frequency_range[0]), resolution)
+
+    # Split frequency array into chunks for parallel processing
+    num_chunks = 12  # Number of processes
+    frequency_chunks = np.array_split(frequency, num_chunks)
+    period_chunks = np.array_split(period, num_chunks)
+
+    # Use multiprocessing to compute the first Lomb-Scargle periodogram
+    with multiprocessing.Pool() as pool:
+        power_lomb_1_chunks = pool.map(compute_lombscargle, [(time, flux, chunk) for chunk in frequency_chunks])
+
+    # Combine the results from each chunk
+    power_lomb_1_regular = np.concatenate(power_lomb_1_chunks)
+
+    if list_of_random_lightcurves:
+
+        list_of_random_lightcurves_lombed = []
+        list_of_difference_between_rand_and_regular = []
+        power_lomb_difference_squared = np.zeros_like(power_lomb_1_regular)
+
+        print('List of random light curves present, computing random light curves')
+        i = 0
+
+        for lightcurve in list_of_random_lightcurves:
+
+            print(f"Computing random light curve {i} of {len(list_of_random_lightcurves)}", end='\r')
+
+            time, flux = lightcurve['time'], lightcurve['flux']
+            with multiprocessing.Pool() as pool:
+                power_lomb_1_chunks = pool.map(compute_lombscargle, [(time, flux, chunk) for chunk in frequency_chunks])
+            power_lomb_1 = np.concatenate(power_lomb_1_chunks)
+            list_of_random_lightcurves_lombed.append(power_lomb_1)
+            difference_squared = (power_lomb_1_regular - power_lomb_1) ** 2
+            list_of_difference_between_rand_and_regular.append(difference_squared)
+            power_lomb_difference_squared += difference_squared
+            i += 1
+
+        list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
+
+        plt.figure(figsize=(12, 6))
+        plt.title("Random Light Curves Lomb-Scargle Periodogram difference squared")
+        plt.plot(period, power_lomb_difference_squared, label="Random Light Curves")
+
+        plt.figure(figsize=(12, 6))
+        plt.title("Random Light Curves Lomb-Scargle Periodogram")
+        plt.plot(period, list_of_random_lightcurves_lombed_averaged, label="Random Light Curves")
+        plt.show()
+
+        power_lomb_1 = power_lomb_1_regular - list_of_random_lightcurves_lombed_averaged
+
+        plt.figure(figsize=(12, 6))
+        plt.title("Random Light Curves Subtracted Lomb-Scargle Periodogram")
+        plt.plot(period, power_lomb_1, label="Random Light Curves Subtracted")
+        plt.show()
+
+    else:
+        power_lomb_1 = power_lomb_1_regular
+        power_lomb_difference_squared = None
+
+    plt.figure(figsize=(12, 6))
+    plt.title("First Lomb-Scargle Periodogram")
+    plt.plot(period, power_lomb_1, label="First Lomb-Scargle Periodogram")
+    plt.show()
+
+    print('computing second periodogram')
+    # Second Lomb-Scargle periodogram on the power spectrum
+    with multiprocessing.Pool() as pool:
+        power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
+
+    power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
+
+    plt.figure(figsize=(12, 6))
+    plt.title("Second Lomb-Scargle Periodogram")
+    plt.plot(period, power_lomb_2_regular, label="Second Lomb-Scargle Periodogram")
+
+    if power_lomb_difference_squared is not None:
+        print('computing second periodogram for difference squared')
+        with multiprocessing.Pool() as pool:
+            power_lomb_2_diff_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_difference_squared, chunk) for chunk in period_chunks])
+
+        power_lomb_2_difference_squared = np.concatenate(power_lomb_2_diff_chunks)
+
+        plt.figure(figsize=(12, 6))
+        plt.title("Second Lomb-Scargle Periodogram (Difference Squared)")
+        plt.plot(period, power_lomb_2_difference_squared, label="Second Lomb-Scargle Periodogram (Difference Squared)")
+        plt.show()
+
+    return period, power_lomb_2_regular
+
+def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False,different = False):
     print("Running Lomb-Scargle Periodogram Analysis...")
-    period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range,list_of_random_lightcurves)
+
+    # Compute the Lomb-Scargle periodogram
+    if not different:
+        period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range,list_of_random_lightcurves)
+    else:
+        period, lomb2 =find_transits_adjusted(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range,list_of_random_lightcurves)
     
     # Compute the gradient and the second derivative (gradient of the gradient)
     gradient = np.gradient(lomb2, period)
@@ -577,12 +686,12 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     print(f"Excluding peaks before period = {period_threshold:.2f} days")
     
     # Determine peak detection parameters algorithmically
-    height = np.mean(lomb2) + 1 * np.std(lomb2)
+    height = np.median(lomb2) + 0 * np.std(lomb2)
     distance = resolution // 1000
-    prominence = np.mean(lomb2) + 1 * np.std(lomb2)
+    prominence = np.median(lomb2) + 0 * np.std(lomb2)
     
     # Find initial peaks using scipy's find_peaks with algorithmically determined parameters
-    peaks, _ = find_peaks(lomb2, height=height, distance=distance, prominence=prominence)
+    peaks, _ = find_peaks(lomb2,height=height, distance=distance, prominence=prominence)
     peak_pos = period[peaks]
     peak_powers = lomb2[peaks]
     
