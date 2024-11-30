@@ -22,7 +22,7 @@ def analyze_light_curves(light_curves, model, device):
         time_tensor = torch.tensor(time_array, dtype=torch.float32).unsqueeze(0).to(device)
         
         with torch.no_grad():
-            detected_count_pred = model(flux_with_noise_tensor, time_tensor, n_samples=10)
+            detected_count_pred = model(flux_with_noise_tensor, time_tensor)
             estimated_num_planets = torch.argmax(detected_count_pred, dim=-1).item()
             probabilities = detected_count_pred.squeeze().cpu().numpy()
             estimated_planets.append((estimated_num_planets, true_num_planets, time_array, flux_with_noise, combined_light_curve, probabilities, total_planets))
@@ -44,21 +44,25 @@ def plot_light_curves(estimated_planets):
         axs[i].set_title(f'Detectable Planets: {true_num_planets}, Estimated Planets: {estimated_num_planets}', fontsize=12) #Total Planets: {total_planets}, 
 
         # Add probabilities as text
-        #prob_text = '\n'.join([f'{j}: {prob:.2%}' for j, prob in enumerate(probabilities)])
-        #axs[i].text(0.02, 0.98, prob_text, transform=axs[i].transAxes, fontsize=10, verticalalignment='top')
+        prob_text = '\n'.join([f'{j}: {prob:.2%}' for j, prob in enumerate(probabilities)])
+        axs[i].text(0.02, 0.98, prob_text, transform=axs[i].transAxes, fontsize=10, verticalalignment='top')
 
     #plt.tight_layout()
     plt.show()
 
 def main():
-    num_systems = 1
+    num_systems = 5
     max_planets_per_system = 9
     total_time = 540
     max_len = 26427
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = TransitModel(max_len, max_len).to(device)
-    model.load_state_dict(torch.load("theBigModel.pth", map_location=device)['model_state_dict'])
+    input_size = 2
+    hidden_size = 128
+    num_layers = 2
+    num_classes = 12
+    model = TransitModel(input_size, hidden_size, num_layers, num_classes).to(device)
+    model.load_state_dict(torch.load("theBigModeldifferntModel.pth", map_location=device)['model_state_dict'])
 
     light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.0204340278)
     estimated_planets = analyze_light_curves(light_curves, model, device)
