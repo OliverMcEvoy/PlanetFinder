@@ -116,10 +116,10 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
     return systems
 
 
-def save(args):
-    with h5py.file ...:
-        flux = list -> str
-        flux = df['flux'].apply(lambda x: json.dumps(x))
+# def save(args):
+#     with h5py.file ...:
+#         flux = list -> str
+#         flux = df['flux'].apply(lambda x: json.dumps(x))
 
         
 

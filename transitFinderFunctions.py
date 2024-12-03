@@ -84,12 +84,10 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
 
             print(len(tmptime), len(tmpflux), len(tmperror))
 
-            # Remove NaNs
             mask = ~np.isnan(tmpflux) & ~np.isnan(tmperror)
             tmptime = tmptime[mask]
             tmpflux = tmpflux[mask]
             tmperror = tmperror[mask]
-
 
             if randomise:
                 np.random.shuffle(tmptime)
@@ -101,7 +99,6 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
     array_size = len(flux)
     window_length = min(51, array_size - (array_size % 2 == 0))
 
-
     if filter_type == 'savgol':
         interp_savgol = savgol_filter(flux, window_length=window_length, polyorder=3)
     elif filter_type == 'medfilt':
@@ -112,13 +109,12 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
     error = error / interp_savgol
 
 
-    # Store the data in a dataframe.
     df = pd.DataFrame({"time": time, "flux": flux, "error": error})
     mean_flux = np.mean(flux)
     std_flux = np.std(flux)
     df = df[(df["flux"] <= mean_flux + 2 * std_flux) & (df["flux"] >= mean_flux - 8 * std_flux)]
-    
-    return df 
+
+    return df
 
 
 def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_type = 'savgol',randomise = False):
@@ -386,9 +382,13 @@ def plot_phase_folded_light_curves(kepler_dataframe, results_list):
         plt.tight_layout()
         plt.show()
 
-def plot_light_curve(time,flux,flux_error):
+def plot_light_curve(time,flux,flux_error =False):
     plt.figure(figsize=(10, 6))
-    plt.errorbar(time, flux, yerr=flux_error, fmt='o', color='red', markersize=2)
+
+    if flux_error:
+        plt.errorbar(time, flux, yerr=flux_error, fmt='o', color='red', markersize=2)
+    else:
+        plt.plot(time, flux, color='red')
     plt.xlabel("Time (days)")
     plt.ylabel("Normalized Flux")
     plt.title("Kepler Light Curve")

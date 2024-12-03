@@ -44,7 +44,7 @@ def plot_light_curves(results):
         axs = [axs]
 
     for i, (true_periods, predicted_periods, time_array, flux_with_noise, combined_light_curve, true_num_planets, predicted_num_planets) in enumerate(results):
-        axs[i].plot(time_array, flux_with_noise, label='Normalized Light Curve', color='red')
+        axs[i].plot(time_array, flux_with_noise, label='Normalized Light Curve', color='blue')
       #  axs[i].plot(time_array, combined_light_curve, label='No-noise Light Curve', color='blue')
 
         axs[i].set_xlabel('Time (days)')
@@ -56,8 +56,8 @@ def plot_light_curves(results):
         actual_text = f"Actual periods: {', '.join([f'{p:.2f}' for p in true_periods])}"
         predicted_text = f"Predicted periods: {', '.join([f'{p:.2f}' for p in predicted_periods])}"
 
-        axs[i].text(0.02, 0.98, actual_text, transform=axs[i].transAxes, fontsize=20, verticalalignment='top')
-        axs[i].text(0.02, 0.92, predicted_text, transform=axs[i].transAxes, fontsize=20, verticalalignment='top')
+        axs[i].text(0.02, 0.98, actual_text, transform=axs[i].transAxes, fontsize=16, verticalalignment='top')
+        axs[i].text(0.02, 0.92, predicted_text, transform=axs[i].transAxes, fontsize=16, verticalalignment='top')
 
     plt.tight_layout()
     plt.show()
@@ -67,8 +67,8 @@ def main():
     max_planets_per_system = 9
     total_time = 1600
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model("AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth", device)
+    device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = load_model("1_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth", device)
 
     light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.02043357)
     results = analyze_light_curves(light_curves, model, device)
