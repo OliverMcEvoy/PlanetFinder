@@ -2,71 +2,77 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from PlanetGenerationExtreme import generate_random_planet_systems, process_system
-from transitFinderExtreme import TransitModel  # Assuming the model code is saved in model.py
+from transitFinderExtreme import TransitModel, load_model
 
 def generate_light_curves(num_systems=10, max_planets_per_system=6, total_time=365, cadence=0.0208333):
-    systems = generate_random_planet_systems(num_systems, max_planets_per_system, total_time)
+    systems = generate_random_planet_systems(num_systems, max_planets_per_system, total_time,True)
     light_curves = []
     for system in systems:
         time_array, flux_with_noise, combined_light_curve, total_time, star_radius, observation_noise, u1, u2, planets, num_detectable_planets, total_planets = process_system(system, snr_threshold=1, total_time=total_time, cadence=cadence)
-        light_curves.append((time_array, flux_with_noise, combined_light_curve, num_detectable_planets, total_planets))
+        light_curves.append((time_array, flux_with_noise, combined_light_curve, planets, num_detectable_planets, total_planets))
 
     return light_curves
 
 def analyze_light_curves(light_curves, model, device):
     model.eval()
-    estimated_planets = []
-    for time_array, flux_with_noise, combined_light_curve, true_num_planets, total_planets in light_curves:
+    results = []
+    for time_array, flux_with_noise, combined_light_curve, planets, true_num_planets, total_planets in light_curves:
         flux_with_noise /= np.abs(flux_with_noise).max()
         flux_with_noise_tensor = torch.tensor(flux_with_noise, dtype=torch.float32).unsqueeze(0).to(device)
-        time_tensor = torch.tensor(time_array, dtype=torch.float32).unsqueeze(0).to(device)
-        
+
         with torch.no_grad():
-            detected_count_pred = model(flux_with_noise_tensor, time_tensor)
-            estimated_num_planets = torch.argmax(detected_count_pred, dim=-1).item()
-            probabilities = detected_count_pred.squeeze().cpu().numpy()
-            estimated_planets.append((estimated_num_planets, true_num_planets, time_array, flux_with_noise, combined_light_curve, probabilities, total_planets))
-    return estimated_planets
+            predicted_periods, predicted_num_planets = model(flux_with_noise_tensor)  # Model output: predicted periods and number of planets
+            predicted_periods = predicted_periods.squeeze(0).cpu().numpy()
+            predicted_num_planets = predicted_num_planets.item()
 
-def plot_light_curves(estimated_planets):
-    fig, axs = plt.subplots(len(estimated_planets), 1, figsize=(15, 5 * len(estimated_planets)))
+        # Extract actual periods from planets
+        true_periods = [planet['period'] for planet in planets]
+        
+        # Print actual vs predicted periods and number of planets
+        print(f"Actual periods: {true_periods}")
+        print(f"Predicted periods: {predicted_periods}")
+        print(f"Actual number of planets: {true_num_planets}")
+        print(f"Predicted number of planets: {predicted_num_planets}")
 
-    if len(estimated_planets) == 1:
+        results.append((true_periods, predicted_periods, time_array, flux_with_noise, combined_light_curve, true_num_planets, predicted_num_planets))
+    return results
+
+def plot_light_curves(results):
+    fig, axs = plt.subplots(len(results), 1, figsize=(15, 10))
+
+    if len(results) == 1:
         axs = [axs]
 
-    for i, (estimated_num_planets, true_num_planets, time_array, flux_with_noise, combined_light_curve, probabilities, total_planets) in enumerate(estimated_planets):
-        
-        axs[i].plot(time_array, flux_with_noise, label='Normalised Light Curve', color='red')
-        axs[i].plot(time_array, combined_light_curve, label='No noise no normalising Light Curve', color='blue')
+    for i, (true_periods, predicted_periods, time_array, flux_with_noise, combined_light_curve, true_num_planets, predicted_num_planets) in enumerate(results):
+        axs[i].plot(time_array, flux_with_noise, label='Normalized Light Curve', color='red')
+      #  axs[i].plot(time_array, combined_light_curve, label='No-noise Light Curve', color='blue')
+
         axs[i].set_xlabel('Time (days)')
         axs[i].set_ylabel('Flux')
         axs[i].legend()
-        axs[i].set_title(f'Detectable Planets: {true_num_planets}, Estimated Planets: {estimated_num_planets}', fontsize=12) #Total Planets: {total_planets}, 
+        axs[i].set_title(f"True Planets: {true_num_planets}, Predicted Planets: {predicted_num_planets}")
 
-        # Add probabilities as text
-        prob_text = '\n'.join([f'{j}: {prob:.2%}' for j, prob in enumerate(probabilities)])
-        axs[i].text(0.02, 0.98, prob_text, transform=axs[i].transAxes, fontsize=10, verticalalignment='top')
+        # Add text showing the actual and predicted periods
+        actual_text = f"Actual periods: {', '.join([f'{p:.2f}' for p in true_periods])}"
+        predicted_text = f"Predicted periods: {', '.join([f'{p:.2f}' for p in predicted_periods])}"
 
-    #plt.tight_layout()
+        axs[i].text(0.02, 0.98, actual_text, transform=axs[i].transAxes, fontsize=20, verticalalignment='top')
+        axs[i].text(0.02, 0.92, predicted_text, transform=axs[i].transAxes, fontsize=20, verticalalignment='top')
+
+    plt.tight_layout()
     plt.show()
 
 def main():
-    num_systems = 5
+    num_systems = 1
     max_planets_per_system = 9
-    total_time = 540
-    max_len = 26427
+    total_time = 1600
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_size = 2
-    hidden_size = 128
-    num_layers = 2
-    num_classes = 12
-    model = TransitModel(input_size, hidden_size, num_layers, num_classes).to(device)
-    model.load_state_dict(torch.load("theBigModeldifferntModel.pth", map_location=device)['model_state_dict'])
+    model = load_model("AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth", device)
 
-    light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.0204340278)
-    estimated_planets = analyze_light_curves(light_curves, model, device)
-    plot_light_curves(estimated_planets)
+    light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.02043357)
+    results = analyze_light_curves(light_curves, model, device)
+    plot_light_curves(results)
 
 if __name__ == "__main__":
     main()

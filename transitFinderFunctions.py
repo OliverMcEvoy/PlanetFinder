@@ -319,7 +319,7 @@ def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05,
                 if power_lower_bound < power_ratio < power_upper_bound:
                     is_unique = False
                     break
-                # Check combinations of previous powers
+
                 for j in range(i + 1, len(final_powers)):
                     combined_power = final_power + final_powers[j]
                     combined_power_ratio = power / combined_power
@@ -623,7 +623,7 @@ def find_transits_adjusted(time, flux, resolution, period_range, list_of_random_
 
     return period, power_lomb_2_regular
 
-def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False,different = False):
+def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False,different = False, power_filter = False):
     print("Running Lomb-Scargle Periodogram Analysis...")
 
     # Compute the Lomb-Scargle periodogram
@@ -696,7 +696,10 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     peak_powers = lomb2[peaks]
     
     # Exclude peaks in the low-period region based on the threshold
-    valid_peaks = peak_pos >= period_threshold
+    if(power_filter):
+        valid_peaks = (peak_pos >= period_threshold) & (peak_powers > power_filter) 
+    else:
+        valid_peaks = peak_pos >= period_threshold
     peak_pos = peak_pos[valid_peaks]
     peak_powers = peak_powers[valid_peaks]
     

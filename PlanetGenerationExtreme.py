@@ -71,11 +71,16 @@ def limb_darken_values():
         return limb_darken_values()
     return u1, u2
 
-def generate_random_planet_systems(num_systems, max_planets_per_system, total_time):
+def generate_random_planet_systems(num_systems, max_planets_per_system, total_time, force_max_planets=False):
     systems = []
     observation_noise = np.random.uniform(0.0002, 0.0004)
     for _ in range(num_systems):
-        num_planets = np.random.randint(1, max_planets_per_system + 1)
+
+        if force_max_planets:
+            num_planets = max_planets_per_system
+        else:
+            num_planets = np.random.randint(1, max_planets_per_system + 1)
+
         planets = []
 
         star_radius = np.random.uniform(1.0, 2.0)
@@ -109,6 +114,14 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
             'u2': u2
         })
     return systems
+
+
+def save(args):
+    with h5py.file ...:
+        flux = list -> str
+        flux = df['flux'].apply(lambda x: json.dumps(x))
+
+        
 
 def process_system(system, snr_threshold, total_time, cadence):
     time_array, flux_with_noise, combined_light_curve = generate_multi_planet_light_curve(
