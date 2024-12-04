@@ -64,7 +64,15 @@ def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
 
     return df, stellar_params
 
-def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
+def getRandomisedData(path,interations, filter_type):
+
+    list_of_random_lightcurves = []
+    for i in range (interations):
+        list_of_random_lightcurves.append(loadDataFromFitsFiles(path, filter_type=filter_type, randomise=True))
+
+    return list_of_random_lightcurves    
+
+def loadDataFromFitsFiles(path, filter_type='savgol', randomise=False):
     '''
     Function to load data from multiple fits files in a folder
     @params
@@ -75,14 +83,12 @@ def loadDataFromFitsFiles(FolderPath, filter_type='savgol', randomise=False):
     error: array -> array containing the error values for each flux value.
     '''
     time, flux, error = np.array([]), np.array([]), np.array([])
-    for lcfile in glob.glob(FolderPath + '/*.fits'):
+    for lcfile in glob.glob(path + '/*.fits'):
         with fits.open(lcfile) as lc:
             lc_data = lc[1].data  # Assuming the data is in the first extension
             tmptime = np.array(lc_data['TIME'])
             tmpflux = np.array(lc_data['PDCSAP_FLUX'])
             tmperror = np.array(lc_data['PDCSAP_FLUX_ERR'])
-
-            print(len(tmptime), len(tmpflux), len(tmperror))
 
             mask = ~np.isnan(tmpflux) & ~np.isnan(tmperror)
             tmptime = tmptime[mask]
@@ -382,11 +388,12 @@ def plot_phase_folded_light_curves(kepler_dataframe, results_list):
         plt.tight_layout()
         plt.show()
 
-def plot_light_curve(time,flux,flux_error =False):
+def plot_light_curve(time,flux,flux_error=None):
     plt.figure(figsize=(10, 6))
 
-    if flux_error:
+    if flux_error is not None:
         plt.errorbar(time, flux, yerr=flux_error, fmt='o', color='red', markersize=2)
+
     else:
         plt.plot(time, flux, color='red')
     plt.xlabel("Time (days)")
@@ -456,21 +463,12 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
     # Combine the results from each chunk
     power_lomb_1 = np.concatenate(power_lomb_1_chunks)
 
-    plt.figure(figsize=(12, 6))
-    plt.title("First Lomb-Scargle Periodogram")
-    plt.plot(period, power_lomb_1, label="First Lomb-Scargle Periodogram")
-    plt.show()
-
-    print('computing second periodogram')
     # Second Lomb-Scargle periodogram on the power spectrum
     with multiprocessing.Pool() as pool:
         power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
 
     power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
 
-    plt.figure(figsize=(12, 6))
-    plt.title("Second Lomb-Scargle Periodogram")
-    plt.plot(period, power_lomb_2_regular, label="Second Lomb-Scargle Periodogram")
 
     if list_of_random_lightcurves:
 
@@ -500,21 +498,8 @@ def find_transits(time, flux, resolution,period_range, list_of_random_lightcurve
 
         list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
 
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Lomb-Scargle Periodogram difference squared")
-        plt.plot(period, power_lomb_difference_squared, label="Random Light Curves")
-
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Lomb-Scargle Periodogram")
-        plt.plot(period, list_of_random_lightcurves_lombed_averaged, label="Random Light Curves")
-        plt.show()
 
         power_lomb_2 = power_lomb_2_regular - list_of_random_lightcurves_lombed_averaged
-
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Subtracted Lomb-Scargle Periodogram")
-        plt.plot(period, power_lomb_2, label="Random Light Curves Subtracted")
-        plt.show()
 
     else:
         power_lomb_2 = power_lomb_2_regular
@@ -573,53 +558,16 @@ def find_transits_adjusted(time, flux, resolution, period_range, list_of_random_
 
         list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
 
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Lomb-Scargle Periodogram difference squared")
-        plt.plot(period, power_lomb_difference_squared, label="Random Light Curves")
-
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Lomb-Scargle Periodogram")
-        plt.plot(period, list_of_random_lightcurves_lombed_averaged, label="Random Light Curves")
-        plt.show()
-
-        power_lomb_1 = power_lomb_1_regular - list_of_random_lightcurves_lombed_averaged
-
-        plt.figure(figsize=(12, 6))
-        plt.title("Random Light Curves Subtracted Lomb-Scargle Periodogram")
-        plt.plot(period, power_lomb_1, label="Random Light Curves Subtracted")
-        plt.show()
-
     else:
         power_lomb_1 = power_lomb_1_regular
         power_lomb_difference_squared = None
 
-    plt.figure(figsize=(12, 6))
-    plt.title("First Lomb-Scargle Periodogram")
-    plt.plot(period, power_lomb_1, label="First Lomb-Scargle Periodogram")
-    plt.show()
-
-    print('computing second periodogram')
     # Second Lomb-Scargle periodogram on the power spectrum
     with multiprocessing.Pool() as pool:
         power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
 
     power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
 
-    plt.figure(figsize=(12, 6))
-    plt.title("Second Lomb-Scargle Periodogram")
-    plt.plot(period, power_lomb_2_regular, label="Second Lomb-Scargle Periodogram")
-
-    if power_lomb_difference_squared is not None:
-        print('computing second periodogram for difference squared')
-        with multiprocessing.Pool() as pool:
-            power_lomb_2_diff_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_difference_squared, chunk) for chunk in period_chunks])
-
-        power_lomb_2_difference_squared = np.concatenate(power_lomb_2_diff_chunks)
-
-        plt.figure(figsize=(12, 6))
-        plt.title("Second Lomb-Scargle Periodogram (Difference Squared)")
-        plt.plot(period, power_lomb_2_difference_squared, label="Second Lomb-Scargle Periodogram (Difference Squared)")
-        plt.show()
 
     return period, power_lomb_2_regular
 
@@ -631,64 +579,12 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
         period, lomb2 = find_transits(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range,list_of_random_lightcurves)
     else:
         period, lomb2 =find_transits_adjusted(kepler_dataframe["time"], kepler_dataframe["flux"], resolution,period_range,list_of_random_lightcurves)
-    
-    # Compute the gradient and the second derivative (gradient of the gradient)
-    gradient = np.gradient(lomb2, period)
-    second_derivative = np.gradient(gradient, period)
-    
-    # Calculate rolling mean and standard deviation of the gradient
-    window_size = 50  # Adjust window size as needed
-    rolling_std = pd.Series(gradient).rolling(window=window_size).std().fillna(0)
-    
-    # Find the point where the gradient stabilizes
-    stabilization_index = np.argmax(rolling_std < np.mean(rolling_std))
-    gradient_threshold = np.abs(gradient[stabilization_index])
-    
-    # Determine the second derivative threshold algorithmically
-    second_derivative_threshold = np.mean(np.abs(second_derivative)) + 2 * np.std(np.abs(second_derivative))
-    
-    print(f"Gradient Threshold: {gradient_threshold:.2e}, Second Derivative Threshold: {second_derivative_threshold:.2e}")
 
-    # Plot the gradient
-    plt.figure(figsize=(10, 6))
-    plt.plot(period, gradient, label="Gradient of Power")
-    plt.axhline(0, color='gray', linestyle='--', alpha=0.7)
-    plt.axhline(gradient_threshold, color='red', linestyle='--', label='Gradient Threshold')
-    plt.xlabel("Period (days)")
-    plt.ylabel("Gradient")
-    plt.title("Gradient of Lomb-Scargle Power vs Period")
-    plt.legend()
-    plt.show()
-
-    # Plot the second derivative
-    plt.figure(figsize=(10, 6))
-    plt.plot(period, second_derivative, label="Second Derivative of Power")
-    plt.axhline(0, color='gray', linestyle='--', alpha=0.7)
-    plt.xlabel("Period (days)")
-    plt.ylabel("Second Derivative")
-    plt.title("Second Derivative of Lomb-Scargle Power vs Period")
-    plt.legend()
-    plt.show()
-    
-    # Determine regions where both gradient and second derivative are small
-    smooth_region_indices = np.where(
-        (np.abs(gradient) < gradient_threshold) &
-        (np.abs(second_derivative) < second_derivative_threshold)
-    )[0]
-
-    # Ensure there are multiple consecutive points in the smooth region
-    if len(smooth_region_indices) > 1:
-        smooth_start_index = smooth_region_indices[0]  # Start of smooth region
-        period_threshold = period[smooth_start_index]
-    else:
-        period_threshold = np.min(period)  # Fallback if no smooth region is found
-
-    print(f"Excluding peaks before period = {period_threshold:.2f} days")
     
     # Determine peak detection parameters algorithmically
-    height = np.median(lomb2) + 0 * np.std(lomb2)
-    distance = resolution // 1000
-    prominence = np.median(lomb2) + 0 * np.std(lomb2)
+    height = np.median(lomb2) + 3 * np.std(lomb2)
+    distance = resolution // 10000
+    prominence = np.median(lomb2) + 3 * np.std(lomb2)
     
     # Find initial peaks using scipy's find_peaks with algorithmically determined parameters
     peaks, _ = find_peaks(lomb2,height=height, distance=distance, prominence=prominence)
@@ -697,17 +593,18 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     
     # Exclude peaks in the low-period region based on the threshold
     if(power_filter):
-        valid_peaks = (peak_pos >= period_threshold) & (peak_powers > power_filter) 
+        valid_peaks =(peak_powers > power_filter) 
     else:
-        valid_peaks = peak_pos >= period_threshold
+        valid_peaks = peak_pos 
+
     peak_pos = peak_pos[valid_peaks]
     peak_powers = peak_powers[valid_peaks]
     
     print("Lomb-Scargle Periodogram analysis done")
 
     # Visualize the Lomb-Scargle periodogram and detected peaks
-    plt.figure(figsize=(10, 6))
-    plt.plot(period, lomb2, label="Lomb-Scargle Periodogram")
+    plt.figure(figsize=(12, 6))
+    plt.scatter(period, lomb2, label="Lomb-Scargle Periodogram", color = "black" ,linewidths= 0, s=1)
     plt.plot(peak_pos, peak_powers, "x", label="Detected Peaks", color="red")
     plt.xlabel("Period (days)")
     plt.ylabel("Power")
@@ -715,7 +612,7 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     plt.legend()
     plt.show()
 
-    return peak_pos
+    return peak_pos , peak_powers
 
 
 
