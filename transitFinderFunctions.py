@@ -551,7 +551,7 @@ def chi_squared(params, period, total_time,kepler_phase, star_radius, flux, cade
             'period': period,
             'rp': params[4],
             'a': params[0],
-            'incl': np.pi / 2,
+            'incl': 0,#np.pi / 2,
             'transit_midpoint': params[1]
         }
     ]

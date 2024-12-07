@@ -8,35 +8,25 @@ import h5py
 import argparse
 import matplotlib.pyplot as plt
 
-def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclination, time_array):
-    times = Time(time_array, format='jd')
-    mean_anomaly = 2 * np.pi * (times.jd - transit_midpoint) / period
-    true_anomaly = mean_anomaly
-    x = semi_major_axis * (np.cos(true_anomaly) - 1)
-    y = semi_major_axis * np.sin(true_anomaly)
-    z = y * np.sin(inclination)
-    y = y * np.cos(inclination)
-    positions = CartesianRepresentation(x * u.au, y * u.au, z * u.au)
-    projected_distance = np.sqrt(positions.x**2 + positions.y**2).to(u.au).value
-    
-    return projected_distance
+def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_array):
+    orbit = np.pi *2* (time_array + transit_midpoint) / (period ) # this is due to projected distance have a frequency doubled to what it should be 
+    x_value_of_orbit = semi_major_axis * np.cos(orbit)
+    y_value_of_orbit = semi_major_axis * np.sin(orbit)
+    return x_value_of_orbit, y_value_of_orbit
 
-def calculate_limb_darkened_light_curve(projected_distance, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
-    star_radius = star_radius * (1/215) #convert Steller adius to AU
-    normalised_distance = projected_distance # /star_radius
-    normalised_planet_radius = planet_radius / star_radius
-    light_curve = np.ones_like(normalised_distance)
-    inside_transit = normalised_distance < (1 + normalised_planet_radius)
-    valid_normalised_distance = np.clip(normalised_distance, 0, 1)
-    mu = np.sqrt(1 - valid_normalised_distance**2)
-    intensity = 1 - limb_darkening_u1 * (1 - mu) - limb_darkening_u2 * (1 - mu)**2
-    light_curve[inside_transit] -= (
-        normalised_planet_radius**2 *
-        (1 - limb_darkening_u1 * (1 - mu[inside_transit]) - limb_darkening_u2 * (1 - mu[inside_transit])**2)
-    )
+def calculate_limb_darkened_light_curve(x_value_of_orbit,y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
+    star_radius_in_au = star_radius * (1/215)  # convert Stellar radius to AU 
+    planet_radius_in_au = planet_radius * (1/215) # convert planet radius to AU
+    light_curve = np.ones_like(x_value_of_orbit) # this is the same length as the time array as specified previusly
+    inside_transit = abs(y_value_of_orbit) < star_radius_in_au + planet_radius_in_au # this checks if the planet is passing infront of the sta
+    # mu = np.sqrt(1 - valid_normalised_distance**2)
+    # intensity = 1 - limb_darkening_u1 * (1 - mu) - limb_darkening_u2 * (1 - mu)**2
+    # light_curve[inside_transit] -= normalised_planet_radius**2 * intensity[inside_transit]
+    light_curve[inside_transit] = light_curve[inside_transit] * (planet_radius_in_au/star_radius_in_au)**2
+
     return light_curve
 
-def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = True):
+def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = False):
     time_array = np.arange(0, total_time, cadence)
     combined_light_curve = np.ones_like(time_array)
     star_radius_squared = star_radius ** 2
@@ -48,8 +38,8 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
         inclination = planet['incl']
         transit_midpoint = planet['transit_midpoint']
 
-        projected_distance = calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclination, time_array)
-        light_curve_model = calculate_limb_darkened_light_curve(projected_distance, planet_radius, u1, u2, star_radius)
+        x_value_of_orbit,y_value_of_orbit = calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_array)
+        light_curve_model = calculate_limb_darkened_light_curve(x_value_of_orbit,y_value_of_orbit, planet_radius, u1, u2, star_radius)
 
         combined_light_curve *= light_curve_model
 
@@ -68,9 +58,9 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
     return time_array, flux_with_noise, combined_light_curve
 
 def limb_darken_values():
-    u1 = np.random.uniform(0.1, 1)
-    u2 = np.random.uniform(0.0, 0.5)
-    if 1- (u1 + u2) >0 :
+    u1 = 0.3#np.random.uniform(0.1, 1)
+    u2 = 0.2#np.random.uniform(0.0, 0.5)
+    if 1- (u1 + u2) <0 :
         return limb_darken_values()
     return u1, u2
 
@@ -90,9 +80,9 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
         total_time = total_time
 
         for _ in range(num_planets):
-            period = np.random.uniform(1, 50)
-            planet_radius = np.random.uniform(0.0001, 0.05)
-            semi_major_axis = (period**2)**(1/3)
+            period = 800#np.random.uniform(1, 50)
+            planet_radius = 0.025#np.random.uniform(0.000, 0.05)
+            semi_major_axis = 0.107#np.random.uniform(0.2,1)#(period**2)**(1/3)
             eccentricity = np.random.uniform(0, 0.3)
             inclination = np.pi / 2
             transit_midpoint = np.random.uniform(0, period)
