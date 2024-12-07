@@ -211,7 +211,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
 # Main Function
 def main(hdf5_path, data_percentage=1.0):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel().to(device)
     train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
 
