@@ -379,6 +379,7 @@ def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05,
 def calculate_fit_for_period(result, time, flux, error, total_time, star_radius, cadence):
     period = result["refined_period"]
     bls_model_flux = result["transit_model"]
+    transit_duration = result["duration"]
 
     filtered_phase = phase_fold(time, period)
     min_flux_phase = filtered_phase[np.argmin(bls_model_flux)]
@@ -386,17 +387,16 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     planet_radius = estimate_planet_radius(result["depth"], star_radius)
 
     options = {
-        'maxiter': 1000,
-        'popsize': 70,
+        'maxiter': 5000,
+        'popsize': 200,
         'recombination': 0.7,
         'disp': False,
-        'workers': 1,
-        'tol': 0.0001,
+        'tol': 0.000001,
     }
 
     bounds = [(0, 0.5), (0, period), (0.1, 0.4), (0.1, 0.4)]
 
-    result = differential_evolution(chi_squared, bounds, args=(period, planet_radius, total_time, star_radius, flux, cadence, error), **options)
+    result = differential_evolution(chi_squared, bounds, args=(period, planet_radius, total_time,filtered_phase, star_radius, flux, cadence, error, transit_duration), **options)
 
     best_fit_params = result.x
     best_fit_a = best_fit_params[0]
@@ -415,11 +415,11 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     ]
     pg_time, best_fit_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, 0, snr_threshold=5, u1=best_fit_u1, u2=best_fit_u2, cadence=cadence, simulate_gap_in_data=False)
 
-    best_fit_model_lightcurve = best_fit_model_lightcurve / medfilt(best_fit_model_lightcurve, kernel_size=51)
+    #best_fit_model_lightcurve = best_fit_model_lightcurve / medfilt(best_fit_model_lightcurve, kernel_size=51)
 
-    final_chi2 = chi_squared(best_fit_params, period, planet_radius, total_time, star_radius, flux, cadence, error)
+    final_chi2 = chi_squared(best_fit_params, period, planet_radius, total_time,filtered_phase, star_radius, flux, cadence, error, transit_duration)
 
-    valid_mask = best_fit_model_lightcurve <= 1.005
+    valid_mask = best_fit_model_lightcurve <= 1.0005
     pg_model_phase = phase_fold(pg_time, period)[valid_mask]
     best_fit_model_lightcurve = best_fit_model_lightcurve[valid_mask]
 
@@ -498,7 +498,7 @@ def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None
     filtered_error = error[mask]
     return filtered_phase, filtered_flux, filtered_error, filtered_model_flux
 
-def chi_squared(params,period,radius,  total_time, star_radius, flux, cadence,error):
+def chi_squared(params, period, radius, total_time,kepler_phase, star_radius, flux, cadence, error,transit_duration):
     planets = [
         {
             'period': period,
@@ -512,21 +512,23 @@ def chi_squared(params,period,radius,  total_time, star_radius, flux, cadence,er
     u2 = params[3]
     observation_noise = 0
 
-    #print(f"Current Parameters: {params}")
-
     time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
+    #pg_model_lightcurve = pg_model_lightcurve / medfilt(pg_model_lightcurve, kernel_size=51)
 
-    #plot_light_curve(time, pg_model_lightcurve)
-    pg_model_lightcurve = pg_model_lightcurve / medfilt(pg_model_lightcurve, kernel_size=51)
+    # Phase fold the time and model light curve
+    phase = phase_fold(time, period)
 
+    # Define a window around the transit midpoint
+    transit_midpoint = params[1]
+    window_size = transit_duration * period  # Adjust the window size as needed
+    window_mask = (kepler_phase >= (transit_midpoint - window_size)) & (kepler_phase <= (transit_midpoint + window_size))
 
-    time = phase_fold(time, period)
-    time, full_pg_flux= interpolate_lightcurve(time, pg_model_lightcurve, flux, total_time)
+    time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
 
-    chi2 = np.sum((flux - full_pg_flux) ** 2/error**2)/(np.sum(np.ones_like(flux) )**2)
-    #print(f"Chi2: {chi2:.6f}")
-    differnce_in_chi2 = abs(chi2-1)
-    return differnce_in_chi2
+    # Calculate chi-squared within the window
+    chi2 = np.sum((flux[window_mask] - full_pg_flux) ** 2 / error[window_mask] ** 2) / (np.sum(np.ones_like(flux[window_mask])) ** 2)
+    difference_in_chi2 = abs(chi2 - 1)
+    return difference_in_chi2
 
 def interpolate_lightcurve(time, pg_model_lightcurve, bls_model_flux, total_time):
     # Create a time array matching bls_model_flux length
