@@ -67,14 +67,14 @@ def collate_fn(batch):
 class TransitModel(nn.Module):
     def __init__(self):
         super(TransitModel, self).__init__()
-        self.conv1 = nn.Conv1d(1, 16, kernel_size=5, padding=2)
-        self.conv2 = nn.Conv1d(16, 32, kernel_size=5, padding=2)
-        self.conv3 = nn.Conv1d(32, 64, kernel_size=5, padding=2)
+        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)  # Increased from 16 to 32
+        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)  # Increased from 32 to 64
+        self.conv3 = nn.Conv1d(64, 128, kernel_size=5, padding=2)  # Increased from 64 to 128
         self.pool = nn.MaxPool1d(2)
-        self.fc1 = nn.Linear(64 * 39151, 128)
+        self.fc1 = nn.Linear(128 * 39151, 256)  # Adjusted input size and increased output size from 128 to 256
         self.dropout = nn.Dropout(p=0.5)
-        self.fc2 = nn.Linear(128, 10)  # Predict up to 10 periods
-        self.fc3 = nn.Linear(128, 1)  # Predict the number of planets
+        self.fc2 = nn.Linear(256, 10)  # Increased input size from 128 to 256
+        self.fc3 = nn.Linear(256, 1)  # Increased input size from 128 to 256
 
     def forward(self, x):
         x = x.unsqueeze(1)  # Add channel dimension
@@ -130,6 +130,8 @@ def masked_mse_loss(predicted_periods, target_periods, predicted_num_planets, ta
 
     # Calculate the loss for the number of planets
     num_planets_loss = ((predicted_num_planets - target_num_planets) ** 2).mean()
+    num_planets_loss = num_planets_loss * (25.5/5) # Scale to be similar to period loss
+    
     return period_loss + num_planets_loss
 
 
@@ -138,10 +140,9 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
     if data_percentage < 1.0:
         subset_size = int(len(dataset) * data_percentage)
         dataset = Subset(dataset, range(subset_size))
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)  
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+    optimizer = optim.Adam(model.parameters(), lr=1e-6, weight_decay=1e-5)
     model.train()
-
 
     losses = []
     batch_losses = []
@@ -201,11 +202,11 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
 # Main Function
 def main(hdf5_path, data_percentage=1.0):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=1, batch_size=2, data_percentage=data_percentage)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
 
-    save_model(model, "AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth")
+    save_model(model, "CPU_1_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth")
 
 # Save Model
 def save_model(model, path):
@@ -224,4 +225,4 @@ def load_model(path, device):
 
 if __name__ == "__main__":
     hdf5_path = "TransitFindOneForGap.hdf5"
-    main(hdf5_path, data_percentage=1)
+    main(hdf5_path, data_percentage=0.02)

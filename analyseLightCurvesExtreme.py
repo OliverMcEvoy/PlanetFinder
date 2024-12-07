@@ -64,11 +64,11 @@ def plot_light_curves(results):
 
 def main():
     num_systems = 1
-    max_planets_per_system = 9
+    max_planets_per_system = 2
     total_time = 1600
 
     device = "cpu" #torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = load_model("1_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth", device)
+    model = load_model("2_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth", device)
 
     light_curves = generate_light_curves(num_systems, max_planets_per_system, total_time, cadence=0.02043357)
     results = analyze_light_curves(light_curves, model, device)

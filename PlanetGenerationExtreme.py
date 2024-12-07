@@ -102,7 +102,7 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
                 'period': period,
                 'rp': planet_radius,
                 'a': semi_major_axis,
-                'e': eccentricity,
+                'e': eccentricity, #Note not currently used 
                 'incl': inclination,
                 'transit_midpoint': transit_midpoint
             })
