@@ -10,6 +10,10 @@ from tqdm import tqdm
 from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+from scipy.sparse import coo_matrix
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
 
 # Dataset Definition
 class ExoplanetDataset(Dataset):
@@ -24,6 +28,7 @@ class ExoplanetDataset(Dataset):
 
     def __len__(self):
         return len(self.keys)
+
 
     def __getitem__(self, idx):
         key = self.keys[idx]
@@ -57,6 +62,8 @@ class ExoplanetDataset(Dataset):
             torch.tensor(periods, dtype=torch.float32),
         )
 
+
+
 # Collate Function
 def collate_fn(batch):
     fluxes, periods = zip(*batch)
@@ -67,23 +74,25 @@ def collate_fn(batch):
 class TransitModel(nn.Module):
     def __init__(self):
         super(TransitModel, self).__init__()
-        self.conv1 = nn.Conv1d(1, 32, kernel_size=5, padding=2)  # Increased from 16 to 32
-        self.conv2 = nn.Conv1d(32, 64, kernel_size=5, padding=2)  # Increased from 32 to 64
-        self.conv3 = nn.Conv1d(64, 128, kernel_size=5, padding=2)  # Increased from 64 to 128
-        self.pool = nn.MaxPool1d(2)
-        self.fc1 = nn.Linear(128 * 39151, 256)  # Adjusted input size and increased output size from 128 to 256
-        self.dropout = nn.Dropout(p=0.5)
-        self.fc2 = nn.Linear(256, 10)  # Increased input size from 128 to 256
-        self.fc3 = nn.Linear(256, 1)  # Increased input size from 128 to 256
+        self.conv_layers = nn.Sequential(
+            nn.Conv1d(1, 32, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(32, 64, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(64, 128, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool1d(2)
+        )
+        self.fc1 = nn.Linear(128 * 39151, 256)
+        self.dropout = nn.Dropout(p=0.2)
+        self.fc2 = nn.Linear(256, 10)
+        self.fc3 = nn.Linear(256, 1)
 
     def forward(self, x):
         x = x.unsqueeze(1)  # Add channel dimension
-        x = torch.relu(self.conv1(x))
-        x = torch.relu(self.conv2(x))
-        x = torch.relu(self.conv3(x))
-        x = self.pool(x)
+        x = self.conv_layers(x)
         x = x.flatten(start_dim=1)
-        x = torch.relu(self.fc1(x))
+        x = F.relu(self.fc1(x), inplace=True)
         x = self.dropout(x)
         
         periods = self.fc2(x)  # Predict up to 10 periods
@@ -202,7 +211,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
 # Main Function
 def main(hdf5_path, data_percentage=1.0):
-    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel().to(device)
     train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
 
@@ -225,4 +234,4 @@ def load_model(path, device):
 
 if __name__ == "__main__":
     hdf5_path = "TransitFindOneForGap.hdf5"
-    main(hdf5_path, data_percentage=0.02)
+    main(hdf5_path, data_percentage=0.01)
