@@ -13,7 +13,16 @@ from scipy.optimize import minimize
 import multiprocessing
 from scipy.signal  import medfilt
 from lightkurve.lightcurve import TessLightCurve
+from scipy.interpolate import interp1d
+import PlanetGenerationExtreme as pg
+from scipy.optimize import differential_evolution
+from tqdm import tqdm
+import importlib
+import scipy.optimize as opt
+importlib.reload(pg)
 import glob
+from scipy.optimize import curve_fit
+
 
 def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
     search_result = search_lightcurve(target, mission="Kepler")
@@ -97,6 +106,7 @@ def loadDataFromFitsFiles(path, filter_type='savgol', randomise=False):
 
             if randomise:
                 np.random.shuffle(tmptime)
+                print(tmptime)
 
             time = np.append(time, tmptime)
             flux = np.append(flux, tmpflux)
@@ -176,8 +186,10 @@ def fetch_kepler_data_and_stellar_info_normalise_entire_curve(target, filter_typ
 
     return df, stellar_params
 
-
-def run_bls_analysis(time, flux, error, resolution,min_period, max_period, duration_range=(0.01, 1)):
+def run_bls_analysis(time, flux, error, resolution, min_period, max_period, duration_range=(0.01, 0.25)):
+    """
+    Run the Box Least Squares analysis to detect transits.
+    """
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
     durations = np.linspace(duration_range[0], duration_range[1], 100)
@@ -190,34 +202,43 @@ def run_bls_analysis(time, flux, error, resolution,min_period, max_period, durat
     best_transit_time = results.transit_time[max_power_idx]
 
     # Debugging: Print intermediate results to verify values
-    print(f"Best Period: {best_period}, Best Duration: {best_duration}, Best Transit Time: {best_transit_time}")
+    print(f"Best Period: {best_period}, Best Duration: {best_duration}, Best Transit Time: {best_transit_time}, Max Power: {results.power[max_power_idx]}")
 
     # Validate inputs before calling `bls.model()`
     if not (np.isfinite(best_period) and np.isfinite(best_duration) and np.isfinite(best_transit_time)):
         raise ValueError("Invalid input detected for BoxLeastSquares.model(). Ensure periods, durations, and transit times are finite.")
 
-    # Check if the power is significant enough to indicate a planet
-    if results.power[max_power_idx] < 0.1:  # Threshold can be adjusted based on requirements
-        print("No significant transit signal detected.")
-        return None, None, None, None, None
-
     # Generate the best transit model
     best_transit_model = bls.model(time, best_period, best_duration, best_transit_time)
+
+    # Calculate transit depth for validation
+    in_transit = flux[best_transit_model < 1]
+    out_of_transit = flux[best_transit_model >= 1]
+    calculated_depth = 1 - np.mean(in_transit) / np.mean(out_of_transit)
+    print(f"Calculated Transit Depth: {calculated_depth:.6f}")
+
     return results, results.power, results.period, best_period, best_transit_model
 
 def estimate_planet_radius(transit_depth, stellar_radius):
-    planet_radius = np.sqrt(transit_depth) * stellar_radius 
+    """
+    Estimate the radius of a planet based on the transit depth and stellar radius.
+    """
+    if transit_depth > 1:
+        raise ValueError("Transit depth must be a fractional value (e.g., 0.01 for 1%).")
+    planet_radius = np.sqrt(transit_depth) * stellar_radius
+    print(f"Estimated Planet Radius: {planet_radius:.3f} Solar Radii")
     return planet_radius
 
-def analyze_period(period, time, flux, error, resolution,duration_range):
+def analyze_period(period, time, flux, error, resolution, duration_range, allowed_deviation):
+    """
+    Analyze a specific period to refine its transit model and parameters.
+    """
     try:
-        print(f"Analyzing period {period:.2f} days...")
-
         # Ensure period is a scalar
         if isinstance(period, np.ndarray):
             period = period.item()
 
-        # Skip periods that are too short for a valid transit duration.
+        # Skip periods that are too short for a valid transit duration
         if period < duration_range[1]:
             print(f"Skipping period {period:.2f} days as it's shorter than the maximum transit duration.")
             return None
@@ -227,31 +248,47 @@ def analyze_period(period, time, flux, error, resolution,duration_range):
             flux,
             error,
             resolution,
-            min_period=period * 0.9,
-            max_period=period * 1.1,
+            min_period=period * (1 - allowed_deviation),
+            max_period=period * (1 + allowed_deviation),
             duration_range=duration_range
         )
-        
-        if best_period is not None:
-            return {
-                "candidate_period": period,
-                "refined_period": best_period,
-                "transit_model": best_transit_model,
-                "power": max(power),
-                "duration": results.duration[np.argmax(power)],
-                "depth": results.depth[np.argmax(power)],
-            }
-        else:
-            print(f"No valid period found for {period:.2f} days.")
+
+        # Filter out shallow transits
+        depth = results.depth[np.argmax(power)]
+        if depth < 0.0001:
+            print(f"Skipping shallow transit with depth {depth:.6f} at period {period:.2f} days.")
             return None
+
+        return {
+            "candidate_period": period,
+            "refined_period": best_period,
+            "transit_model": best_transit_model,
+            "power": max(power),
+            "duration": results.duration[np.argmax(power)],
+            "depth": depth,
+        }
     except Exception as e:
         return {"error": str(e), "period": period}
 
-
-def analyze_peaks_with_bls(time, flux, error, peak_periods, resolution=10000,duration_range=(0.01, 0.25)):
+def analyze_peaks_with_bls(kepler_dataframe, peak_periods, resolution=10000, duration_range=(0.01, 0.5), allowed_deviation=0.05):
+    """
+    Analyze multiple period candidates using the BLS algorithm.
+    """
+    time = kepler_dataframe["time"].values
+    flux = kepler_dataframe["flux"].values
+    error = kepler_dataframe["error"].values
 
     with multiprocessing.Pool() as pool:
-        results_list = pool.starmap(analyze_period, [(period, time, flux, error,resolution, duration_range,) for period in peak_periods])
+        results_list = list(
+            tqdm(
+                pool.starmap(
+                    analyze_period, 
+                    [(period, time, flux, error, resolution, duration_range, allowed_deviation) for period in peak_periods]
+                ),
+                total=len(peak_periods),
+                desc="Analyzing Periods"
+            )
+        )
     
     # Filter out None results and handle errors
     final_results = []
@@ -264,6 +301,7 @@ def analyze_peaks_with_bls(time, flux, error, peak_periods, resolution=10000,dur
             final_results.append(result)
     
     return final_results
+
 
 def remove_exact_duplicates(results_list, duplicates_percentage_threshold=0.05, complex_result_list = True):
     unique_results = []
@@ -286,13 +324,12 @@ def remove_exact_duplicates(results_list, duplicates_percentage_threshold=0.05, 
                 is_unique = False
                 break
         if is_unique:
-            print(f"Adding period {period:.3f} days to the unique results.")
             unique_periods.add(period)
             unique_results.append(result)
     
     return unique_results
 
-def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05, percentage_threshold=0.05, power_threshold=0.1):
+def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05, repeat_transit_threshold=0.05, power_threhsold_for_repeat_periods=0.1):
     # Remove exact duplicates
     unique_results = remove_exact_duplicates(results_list, duplicates_percentage_threshold)
     # Sort results by refined_period
@@ -309,14 +346,14 @@ def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05,
         
         for i, final_period in enumerate(final_periods):
             ratio = period / final_period
-            lower_bound = (1 - percentage_threshold) * ratio
-            upper_bound = (1 + percentage_threshold) * ratio
+            lower_bound = (1 - repeat_transit_threshold) * ratio
+            upper_bound = (1 + repeat_transit_threshold) * ratio
 
             if lower_bound < ratio < upper_bound:
                 final_power = final_powers[i]
                 power_ratio = power / final_power
-                power_lower_bound = 1 - power_threshold
-                power_upper_bound = 1 + power_threshold
+                power_lower_bound = 1 - power_threhsold_for_repeat_periods
+                power_upper_bound = 1 + power_threhsold_for_repeat_periods
 
                 if power_lower_bound < power_ratio < power_upper_bound:
                     is_unique = False
@@ -339,55 +376,171 @@ def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05,
 
     return final_results
 
+def calculate_fit_for_period(result, time, flux, error, total_time, star_radius, cadence):
+    period = result["refined_period"]
+    bls_model_flux = result["transit_model"]
 
-def plot_phase_folded_light_curves(kepler_dataframe, results_list):
+    filtered_phase = phase_fold(time, period)
+    min_flux_phase = filtered_phase[np.argmin(bls_model_flux)]
+
+    planet_radius = estimate_planet_radius(result["depth"], star_radius)
+
+    options = {
+        'maxiter': 1000,
+        'popsize': 70,
+        'recombination': 0.7,
+        'disp': False,
+        'workers': 1,
+        'tol': 0.0001,
+    }
+
+    bounds = [(0, 0.5), (0, period), (0.1, 0.4), (0.1, 0.4)]
+
+    result = differential_evolution(chi_squared, bounds, args=(period, planet_radius, total_time, star_radius, flux, cadence, error), **options)
+
+    best_fit_params = result.x
+    best_fit_a = best_fit_params[0]
+    best_fit_transit_midpoint = best_fit_params[1]
+    best_fit_u1 = best_fit_params[2]
+    best_fit_u2 = best_fit_params[3]
+
+    planets = [
+        {
+            'period': period,
+            'rp': planet_radius,
+            'a': best_fit_a,
+            'incl': np.pi / 2,
+            'transit_midpoint': best_fit_transit_midpoint
+        }
+    ]
+    pg_time, best_fit_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, 0, snr_threshold=5, u1=best_fit_u1, u2=best_fit_u2, cadence=cadence, simulate_gap_in_data=False)
+
+    best_fit_model_lightcurve = best_fit_model_lightcurve / medfilt(best_fit_model_lightcurve, kernel_size=51)
+
+    final_chi2 = chi_squared(best_fit_params, period, planet_radius, total_time, star_radius, flux, cadence, error)
+
+    valid_mask = best_fit_model_lightcurve <= 1.005
+    pg_model_phase = phase_fold(pg_time, period)[valid_mask]
+    best_fit_model_lightcurve = best_fit_model_lightcurve[valid_mask]
+
+    print(f"Final Chi2: {final_chi2+1:.6f}")
+    print(f"Best Fit Parameters: {best_fit_params}")
+
+
+    return {
+        'filtered_phase': filtered_phase,
+        'flux': flux,
+        'bls_model_flux': bls_model_flux,
+        'pg_model_phase': pg_model_phase,
+        'best_fit_model_lightcurve': best_fit_model_lightcurve,
+        'final_chi2': final_chi2,
+        'best_fit_params': best_fit_params,
+        'planet_radius': planet_radius
+    }
+
+def calculate_best_fit_parameters(kepler_dataframe, results_list):
     time, flux, error = kepler_dataframe["time"].values, kepler_dataframe["flux"].values, kepler_dataframe["error"].values
-    for i, result in enumerate(results_list):
-        period = result["refined_period"]
-        model_flux = result["transit_model"]
-        duration = result["duration"]
-        phase = ((time % period) / period - 0.5) % 1
+    star_radius = 1
+    cadence = 0.02
+    total_time = time[-1]
 
-        # Find the phase of the minimum flux in the model
-        min_flux_indices = np.where(model_flux == np.min(model_flux))[0]
-        min_flux_phase = np.mean(phase[min_flux_indices])
+    with multiprocessing.Pool() as pool:
+        results = pool.starmap(calculate_fit_for_period, [(result, time, flux, error, total_time, star_radius, cadence) for result in results_list])
 
-        # Adjust phase to center the transit
-        phase = (phase - min_flux_phase + 0.5) % 1 - 0.5
+    return results
 
-        # Calculate the phase range based on the duration of the transit
-        phase_range_for_plot = duration / period
 
-        # Filter the phase and flux to be within the calculated phase range
-        mask = (phase >= -phase_range_for_plot) & (phase <= phase_range_for_plot)
-        filtered_phase = phase[mask]
-        filtered_flux = flux[mask]
-        filtered_error = error[mask]
-        filtered_model_flux = model_flux[mask]
+def plot_phase_folded_light_curves(results):
+    num_candidates = len(results)
+    fig, axs = plt.subplots(num_candidates, 1, figsize=(10, 6*num_candidates), sharex=True, sharey=True)
 
-        fig, axs = plt.subplots(2, 1, figsize=(10, 12))
+    if num_candidates == 1:
+        axs = [axs]
 
-        # Plot unfiltered data
-        axs[0].errorbar(phase, flux, yerr=error, fmt='o', color='black', alpha=0.5, label="Unfiltered Flux", linestyle='none')
-        axs[0].errorbar(phase, model_flux, fmt='s', color='red', alpha=0.5, label="Unfiltered Transit Model", linestyle='none')
-        axs[0].set_xlabel("Phase", fontsize=14)
-        axs[0].set_ylabel("Normalized Flux", fontsize=14)
-        axs[0].set_title(f"Unfiltered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
-        axs[0].legend(fontsize=12)
-        axs[0].grid(True) #tmp to assist with debugging
+    for i, result in enumerate(results):
+        axs[i].errorbar(result['filtered_phase'], result['flux'], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
+        axs[i].errorbar(result['filtered_phase'], result['bls_model_flux'], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
+        axs[i].errorbar(result['pg_model_phase'], result['best_fit_model_lightcurve'], fmt='o', color='blue', alpha=0.5, label="Best Fit Model", linestyle='none')
+        axs[i].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
 
-        # Plot filtered data
-        axs[1].errorbar(filtered_phase, filtered_flux, yerr=filtered_error, fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
-        axs[1].errorbar(filtered_phase, filtered_model_flux, fmt='s', color='red', alpha=0.5, label="Filtered Transit Model", linestyle='none', markersize=2)
-        axs[1].set_xlabel("Phase", fontsize=14)
-        axs[1].set_ylabel("Normalized Flux", fontsize=14)
-        axs[1].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
-        axs[1].legend(fontsize=12)
-        axs[1].grid(True) #tmp to assist with debugging
+    fig.text(0.5, 0.04, 'Phase', ha='center', fontsize=14)
+    fig.text(0.04, 0.5, 'Normalized Flux', va='center', rotation='vertical', fontsize=14)
 
-        plt.tight_layout()
-        plt.show()
+    handles, labels = axs[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc='upper right', fontsize=12)
 
+    plt.tight_layout()
+    plt.subplots_adjust(hspace=0)
+    plt.show()
+
+def phase_fold(time, period, min_flux_phase = None):
+    phase = ((time % period) / period - 0.5) % 1
+    if min_flux_phase is not None:
+        phase = (phase - min_flux_phase) % 1
+    return phase
+
+def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None):
+    phase = ((time % period) / period - 0.5) % 1
+    min_flux_indices = np.where(model_flux == np.min(model_flux))[0]
+    min_flux_phase = np.mean(phase[min_flux_indices])
+    
+    phase = phase_fold(time, period, min_flux_phase)
+    
+    phase_range_for_plot = duration / period
+    mask = (phase >= -phase_range_for_plot) & (phase <= phase_range_for_plot)
+    filtered_phase = phase[mask]
+    filtered_flux = flux[mask]
+    filtered_model_flux = model_flux[mask]
+
+    if error is None:
+        return filtered_phase, filtered_flux, filtered_model_flux
+
+    filtered_error = error[mask]
+    return filtered_phase, filtered_flux, filtered_error, filtered_model_flux
+
+def chi_squared(params,period,radius,  total_time, star_radius, flux, cadence,error):
+    planets = [
+        {
+            'period': period,
+            'rp': radius,
+            'a': params[0],
+            'incl': np.pi / 2,
+            'transit_midpoint': params[1]
+        }
+    ]
+    u1 = params[2]
+    u2 = params[3]
+    observation_noise = 0
+
+    #print(f"Current Parameters: {params}")
+
+    time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
+
+    #plot_light_curve(time, pg_model_lightcurve)
+    pg_model_lightcurve = pg_model_lightcurve / medfilt(pg_model_lightcurve, kernel_size=51)
+
+
+    time = phase_fold(time, period)
+    time, full_pg_flux= interpolate_lightcurve(time, pg_model_lightcurve, flux, total_time)
+
+    chi2 = np.sum((flux - full_pg_flux) ** 2/error**2)/(np.sum(np.ones_like(flux) )**2)
+    #print(f"Chi2: {chi2:.6f}")
+    differnce_in_chi2 = abs(chi2-1)
+    return differnce_in_chi2
+
+def interpolate_lightcurve(time, pg_model_lightcurve, bls_model_flux, total_time):
+    # Create a time array matching bls_model_flux length
+    length_of_bls_model_flux = len(bls_model_flux)
+    time_array = np.linspace(0, total_time, length_of_bls_model_flux)
+    full_pg_flux = np.ones(length_of_bls_model_flux, dtype=np.float32)
+
+    # Interpolate pg_model_lightcurve onto time_array
+    interpolation_function = interp1d(
+        time, pg_model_lightcurve, kind='linear', bounds_error=False, fill_value=1.0
+    )
+    full_pg_flux = interpolation_function(time_array)
+
+    return time_array, full_pg_flux
 def plot_light_curve(time,flux,flux_error=None):
     plt.figure(figsize=(10, 6))
 
@@ -536,8 +689,7 @@ def find_transits_adjusted(time, flux, resolution, period_range, list_of_random_
     if list_of_random_lightcurves:
 
         list_of_random_lightcurves_lombed = []
-        list_of_difference_between_rand_and_regular = []
-        power_lomb_difference_squared = np.zeros_like(power_lomb_1_regular)
+        list_of_difference= []
 
         print('List of random light curves present, computing random light curves')
         i = 0
@@ -549,27 +701,27 @@ def find_transits_adjusted(time, flux, resolution, period_range, list_of_random_
             time, flux = lightcurve['time'], lightcurve['flux']
             with multiprocessing.Pool() as pool:
                 power_lomb_1_chunks = pool.map(compute_lombscargle, [(time, flux, chunk) for chunk in frequency_chunks])
-            power_lomb_1 = np.concatenate(power_lomb_1_chunks)
-            list_of_random_lightcurves_lombed.append(power_lomb_1)
-            difference_squared = (power_lomb_1_regular - power_lomb_1) ** 2
-            list_of_difference_between_rand_and_regular.append(difference_squared)
-            power_lomb_difference_squared += difference_squared
+            power_lomb_shuffled = np.concatenate(power_lomb_1_chunks)
+            list_of_random_lightcurves_lombed.append(power_lomb_shuffled)
+            list_of_difference.append((power_lomb_1_regular - power_lomb_shuffled))
+
             i += 1
 
-        list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
+        #list_of_random_lightcurves_lombed_averaged = np.mean(list_of_random_lightcurves_lombed, axis=0)
+        #power_lomb_1 = power_lomb_1_regular - list_of_random_lightcurves_lombed_averaged
+        power_lomb_1 = np.mean(list_of_difference, axis=0)
 
     else:
         power_lomb_1 = power_lomb_1_regular
-        power_lomb_difference_squared = None
 
     # Second Lomb-Scargle periodogram on the power spectrum
     with multiprocessing.Pool() as pool:
         power_lomb_2_chunks = pool.map(compute_lombscargle, [(frequency, power_lomb_1, chunk) for chunk in period_chunks])
 
-    power_lomb_2_regular = np.concatenate(power_lomb_2_chunks)
+    power_lomb_2 = np.concatenate(power_lomb_2_chunks)
 
 
-    return period, power_lomb_2_regular
+    return period, power_lomb_2
 
 def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1, 30),list_of_random_lightcurves = False,different = False, power_filter = False):
     print("Running Lomb-Scargle Periodogram Analysis...")
@@ -607,6 +759,7 @@ def run_lomb_scargle_analysis(kepler_dataframe, resolution=5000,period_range=(1,
     plt.scatter(period, lomb2, label="Lomb-Scargle Periodogram", color = "black" ,linewidths= 0, s=1)
     plt.plot(peak_pos, peak_powers, "x", label="Detected Peaks", color="red")
     plt.xlabel("Period (days)")
+    plt.yscale("log")
     plt.ylabel("Power")
     plt.title("Lomb-Scargle Periodogram")
     plt.legend()

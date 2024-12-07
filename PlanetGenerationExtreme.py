@@ -18,10 +18,13 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclina
     y = y * np.cos(inclination)
     positions = CartesianRepresentation(x * u.au, y * u.au, z * u.au)
     projected_distance = np.sqrt(positions.x**2 + positions.y**2).to(u.au).value
+    
     return projected_distance
 
 def calculate_limb_darkened_light_curve(projected_distance, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
+    star_radius = star_radius * (1/215)
     normalised_distance = projected_distance / star_radius
+    planet_radius = planet_radius / star_radius
     normalised_planet_radius = planet_radius / star_radius
     light_curve = np.ones_like(normalised_distance)
     inside_transit = normalised_distance < (1 + normalised_planet_radius)
@@ -34,14 +37,14 @@ def calculate_limb_darkened_light_curve(projected_distance, planet_radius, limb_
     )
     return light_curve
 
-def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333):
+def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = True):
     time_array = np.arange(0, total_time, cadence)
     combined_light_curve = np.ones_like(time_array)
     star_radius_squared = star_radius ** 2
 
     for planet in planets:
         period = planet['period']
-        planet_radius = planet['rp'] * star_radius
+        planet_radius = planet['rp'] * (1/215) # convert from stellar radii to AU
         semi_major_axis = planet['a']
         inclination = planet['incl']
         transit_midpoint = planet['transit_midpoint']
@@ -53,14 +56,15 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
 
     flux_with_noise = combined_light_curve + np.random.normal(0, observation_noise, len(time_array))
 
-    # Introduce random gaps and fill them with 1
-    num_gaps = np.random.randint(1, 4)
-    for _ in range(num_gaps):
-        gap_start = np.random.uniform(0, total_time - 50)
-        gap_end = gap_start + np.random.uniform(0, 40)
-        gap_mask = (time_array >= gap_start) & (time_array <= gap_end)
-        flux_with_noise[gap_mask] = 1
-        combined_light_curve[gap_mask] = 1
+    if simulate_gap_in_data:
+        # Introduce random gaps and fill them with 1
+        num_gaps = np.random.randint(1, 4)
+        for _ in range(num_gaps):
+            gap_start = np.random.uniform(0, total_time - 50)
+            gap_end = gap_start + np.random.uniform(0, 40)
+            gap_mask = (time_array >= gap_start) & (time_array <= gap_end)
+            flux_with_noise[gap_mask] = 1
+            combined_light_curve[gap_mask] = 1
 
     return time_array, flux_with_noise, combined_light_curve
 
