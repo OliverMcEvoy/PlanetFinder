@@ -22,9 +22,8 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, inclina
     return projected_distance
 
 def calculate_limb_darkened_light_curve(projected_distance, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
-    star_radius = star_radius * (1/215)
-    normalised_distance = projected_distance / star_radius
-    planet_radius = planet_radius / star_radius
+    star_radius = star_radius * (1/215) #convert Steller adius to AU
+    normalised_distance = projected_distance # /star_radius
     normalised_planet_radius = planet_radius / star_radius
     light_curve = np.ones_like(normalised_distance)
     inside_transit = normalised_distance < (1 + normalised_planet_radius)
@@ -44,7 +43,7 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
 
     for planet in planets:
         period = planet['period']
-        planet_radius = planet['rp'] * (1/215) # convert from stellar radii to AU
+        planet_radius = planet['rp'] #* (1/215) # convert from stellar radii to AU
         semi_major_axis = planet['a']
         inclination = planet['incl']
         transit_midpoint = planet['transit_midpoint']
@@ -77,7 +76,7 @@ def limb_darken_values():
 
 def generate_random_planet_systems(num_systems, max_planets_per_system, total_time, force_max_planets=False):
     systems = []
-    observation_noise = np.random.uniform(0.0002, 0.0004)
+    observation_noise = 0.0001#np.random.uniform(0.0002, 0.0004)
     for _ in range(num_systems):
 
         if force_max_planets:

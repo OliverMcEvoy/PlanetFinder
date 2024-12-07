@@ -22,6 +22,7 @@ import scipy.optimize as opt
 importlib.reload(pg)
 import glob
 from scipy.optimize import curve_fit
+from scipy.optimize import differential_evolution, minimize, basinhopping
 
 
 def fetch_kepler_data_and_stellar_info(target,filter_type = 'savgol'):
@@ -99,7 +100,7 @@ def loadDataFromFitsFiles(path, filter_type='savgol', randomise=False):
             tmpflux = np.array(lc_data['PDCSAP_FLUX'])
             tmperror = np.array(lc_data['PDCSAP_FLUX_ERR'])
 
-            mask = ~np.isnan(tmpflux) & ~np.isnan(tmperror)
+            mask = ~np.isnan(tmpflux) | ~np.isnan(tmperror)
             tmptime = tmptime[mask]
             tmpflux = tmpflux[mask]
             tmperror = tmperror[mask]
@@ -192,7 +193,7 @@ def run_bls_analysis(time, flux, error, resolution, min_period, max_period, dura
     """
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
-    durations = np.linspace(duration_range[0], duration_range[1], 100)
+    durations = np.linspace(duration_range[0], duration_range[1], 200)
     results = bls.power(periods, durations)
 
     # Find the best period based on maximum power
@@ -226,7 +227,6 @@ def estimate_planet_radius(transit_depth, stellar_radius):
     if transit_depth > 1:
         raise ValueError("Transit depth must be a fractional value (e.g., 0.01 for 1%).")
     planet_radius = np.sqrt(transit_depth) * stellar_radius
-    print(f"Estimated Planet Radius: {planet_radius:.3f} Solar Radii")
     return planet_radius
 
 def analyze_period(period, time, flux, error, resolution, duration_range, allowed_deviation):
@@ -258,6 +258,8 @@ def analyze_period(period, time, flux, error, resolution, duration_range, allowe
         if depth < 0.0001:
             print(f"Skipping shallow transit with depth {depth:.6f} at period {period:.2f} days.")
             return None
+        
+        print(f"transit depth: {depth}")
 
         return {
             "candidate_period": period,
@@ -376,67 +378,92 @@ def remove_duplicate_periods(results_list, duplicates_percentage_threshold=0.05,
 
     return final_results
 
-def calculate_fit_for_period(result, time, flux, error, total_time, star_radius, cadence):
+
+def calculate_fit_for_period(result, time, flux, error, total_time, star_radius, cadence, method='minimize'):
     period = result["refined_period"]
     bls_model_flux = result["transit_model"]
     transit_duration = result["duration"]
 
-    filtered_phase = phase_fold(time, period)
+    filtered_phase = phase_fold(time, period,bls_model_flux=bls_model_flux)
     min_flux_phase = filtered_phase[np.argmin(bls_model_flux)]
 
     planet_radius = estimate_planet_radius(result["depth"], star_radius)
 
-    options = {
-        'maxiter': 5000,
-        'popsize': 200,
-        'recombination': 0.7,
+    differential_options = {
+        'maxiter': 20,
+        'popsize': 40,
         'disp': False,
         'tol': 0.000001,
     }
 
-    bounds = [(0, 0.5), (0, period), (0.1, 0.4), (0.1, 0.4)]
+    minimize_options = {
+        'maxiter': 2000,
+        'disp': False,
+        'ftol': 0.000001,
 
-    result = differential_evolution(chi_squared, bounds, args=(period, planet_radius, total_time,filtered_phase, star_radius, flux, cadence, error, transit_duration), **options)
+    }
 
-    best_fit_params = result.x
+    planet_radius = planet_radius
+    bounds = [(0.005, 0.5), (0.1, 0.5), (0.1, 0.5), (planet_radius*0.5, planet_radius*1.5)]
+    initial_guess = [0.2, 0.3, 0.2, planet_radius]
+
+    print(f"initial guess: {initial_guess}")
+
+    if method == 'minimize':
+        result = minimize(lad, initial_guess, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), 
+                          method='SLSQP', bounds=bounds, options=minimize_options)
+        best_fit_params = result.x
+        print('done minimising')
+    elif method == 'differential_evolution':
+        result = differential_evolution(lad, bounds, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), **differential_options)
+        best_fit_params = result.x
+        print('done differential evolution')
+    elif method == 'Nelder-Mead':
+        result = minimize(lad, initial_guess, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), 
+                          method='Nelder-Mead', bounds=bounds, options=minimize_options)
+        best_fit_params = result.x
+    else:
+        raise ValueError(f"Invalid optimization method: {method}")
+
     best_fit_a = best_fit_params[0]
-    best_fit_transit_midpoint = best_fit_params[1]
-    best_fit_u1 = best_fit_params[2]
-    best_fit_u2 = best_fit_params[3]
+    best_fit_u1 = best_fit_params[1]
+    best_fit_u2 = best_fit_params[2]
+    best_fit_radius = best_fit_params[3]
 
     planets = [
         {
             'period': period,
-            'rp': planet_radius,
+            'rp': best_fit_radius,
             'a': best_fit_a,
             'incl': np.pi / 2,
-            'transit_midpoint': best_fit_transit_midpoint
+            'transit_midpoint': period/2
         }
     ]
     pg_time, best_fit_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, 0, snr_threshold=5, u1=best_fit_u1, u2=best_fit_u2, cadence=cadence, simulate_gap_in_data=False)
 
+    best_fit_model_lightcurve = best_fit_model_lightcurve / np.median(best_fit_model_lightcurve)
+
+    pg_generated_phase = phase_fold(pg_time, period, best_fit_model_lightcurve)
+    pg_nodel_lightcurve_projected_onto_kepler_phase = interoplate_phase_folded_light_curve(filtered_phase, pg_generated_phase, best_fit_model_lightcurve)
     #best_fit_model_lightcurve = best_fit_model_lightcurve / medfilt(best_fit_model_lightcurve, kernel_size=51)
 
-    final_chi2 = chi_squared(best_fit_params, period, planet_radius, total_time,filtered_phase, star_radius, flux, cadence, error, transit_duration)
+    final_chi2 = lad(best_fit_params, period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration)
 
-    valid_mask = best_fit_model_lightcurve <= 1.0005
-    pg_model_phase = phase_fold(pg_time, period)[valid_mask]
-    best_fit_model_lightcurve = best_fit_model_lightcurve[valid_mask]
-
-    print(f"Final Chi2: {final_chi2+1:.6f}")
-    print(f"Best Fit Parameters: {best_fit_params}")
-
+    print(f"Final chi2: {final_chi2}")
+    print(f"Best fit parameters: {best_fit_params}")
 
     return {
         'filtered_phase': filtered_phase,
         'flux': flux,
         'bls_model_flux': bls_model_flux,
-        'pg_model_phase': pg_model_phase,
-        'best_fit_model_lightcurve': best_fit_model_lightcurve,
+        'pg_model_phase': filtered_phase,
+        'best_fit_model_lightcurve': pg_nodel_lightcurve_projected_onto_kepler_phase,
         'final_chi2': final_chi2,
         'best_fit_params': best_fit_params,
-        'planet_radius': planet_radius
+        'planet_radius': planet_radius,
+        'method': method
     }
+
 
 def calculate_best_fit_parameters(kepler_dataframe, results_list):
     time, flux, error = kepler_dataframe["time"].values, kepler_dataframe["flux"].values, kepler_dataframe["error"].values
@@ -444,41 +471,61 @@ def calculate_best_fit_parameters(kepler_dataframe, results_list):
     cadence = 0.02
     total_time = time[-1]
 
+    #methods = ['minimize', 'differential_evolution', 'Nelder-Mead']
+    methods = ['minimize','Nelder-Mead']
+    all_results = []
+
     with multiprocessing.Pool() as pool:
-        results = pool.starmap(calculate_fit_for_period, [(result, time, flux, error, total_time, star_radius, cadence) for result in results_list])
+        for method in methods:
+            results = pool.starmap(calculate_fit_for_period, [(result, time, flux, error, total_time, star_radius, cadence, method) for result in results_list])
+            all_results.append(results)
 
-    return results
+    return all_results
+
+def plot_phase_folded_light_curves(all_results):
+    num_candidates = len(all_results[0])
+    fig, axs = plt.subplots(num_candidates, 4, figsize=(20, 6 * num_candidates))
 
 
-def plot_phase_folded_light_curves(results):
-    num_candidates = len(results)
-    fig, axs = plt.subplots(num_candidates, 1, figsize=(10, 6*num_candidates), sharex=True, sharey=True)
+    #methods = ['minimize', 'differential_evolution', 'Nelder-Mead']
+    methods = ['minimize','Nelder-Mead']
+
 
     if num_candidates == 1:
         axs = [axs]
 
-    for i, result in enumerate(results):
-        axs[i].errorbar(result['filtered_phase'], result['flux'], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
-        axs[i].errorbar(result['filtered_phase'], result['bls_model_flux'], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
-        axs[i].errorbar(result['pg_model_phase'], result['best_fit_model_lightcurve'], fmt='o', color='blue', alpha=0.5, label="Best Fit Model", linestyle='none')
-        axs[i].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {i+1}", fontsize=16)
+    for j in range(num_candidates):
+        # Left plot: Filtered Flux and BLS Model Flux (first method)
+        result = all_results[0][j]
+        axs[j][0].errorbar(result['filtered_phase'], result['flux'], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
+        axs[j][0].errorbar(result['filtered_phase'], result['bls_model_flux'], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
+        axs[j][0].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {j + 1}", fontsize=16)
+        axs[j][0].set_ylabel('Normalized Flux')
+        axs[j][0].legend()
+
+        # Right plots: Best Fit Model Light Curve for each method
+        for i, method_results in enumerate(all_results):
+            print(f"Plotting best fit model for method {methods[i]}")
+            result = method_results[j]
+            axs[j][i + 1].errorbar(result['filtered_phase'], result['best_fit_model_lightcurve'], fmt='o', color='blue', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none')
+            axs[j][i + 1].set_title(f"Best Fit Model Light Curve for Candidate Planet {j + 1} ({methods[i]})", fontsize=16)
+            axs[j][i + 1].legend()
 
     fig.text(0.5, 0.04, 'Phase', ha='center', fontsize=14)
-    fig.text(0.04, 0.5, 'Normalized Flux', va='center', rotation='vertical', fontsize=14)
-
-    handles, labels = axs[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc='upper right', fontsize=12)
-
     plt.tight_layout()
-    plt.subplots_adjust(hspace=0)
     plt.show()
 
-def phase_fold(time, period, min_flux_phase = None):
-    phase = ((time % period) / period - 0.5) % 1
-    if min_flux_phase is not None:
+def phase_fold(time, period, flux=None,bls_model_flux=None):
+    phase = ((time % period) / period)
+    if flux is not None:
+        min_flux_phase = ((time[np.argmin(flux)] % period) / period)
         phase = (phase - min_flux_phase) % 1
+    if bls_model_flux is not None:
+        min_flux_phase = ((time[np.argmin(bls_model_flux)] % period) / period)
+        phase = (phase - min_flux_phase) % 1
+    
+    phase = (phase + 0.5) % 1  # Shift phase to center the transit
     return phase
-
 def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None):
     phase = ((time % period) / period - 0.5) % 1
     min_flux_indices = np.where(model_flux == np.min(model_flux))[0]
@@ -498,11 +545,11 @@ def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None
     filtered_error = error[mask]
     return filtered_phase, filtered_flux, filtered_error, filtered_model_flux
 
-def chi_squared(params, period, radius, total_time,kepler_phase, star_radius, flux, cadence, error,transit_duration):
+def chi_squared(params, period, total_time,kepler_phase, star_radius, flux, cadence, error,transit_duration):
     planets = [
         {
             'period': period,
-            'rp': radius,
+            'rp': params[4],
             'a': params[0],
             'incl': np.pi / 2,
             'transit_midpoint': params[1]
@@ -514,21 +561,70 @@ def chi_squared(params, period, radius, total_time,kepler_phase, star_radius, fl
 
     time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
     #pg_model_lightcurve = pg_model_lightcurve / medfilt(pg_model_lightcurve, kernel_size=51)
+    pg_model_lightcurve = pg_model_lightcurve / np.median(pg_model_lightcurve)
 
     # Phase fold the time and model light curve
     phase = phase_fold(time, period)
 
     # Define a window around the transit midpoint
     transit_midpoint = params[1]
-    window_size = transit_duration * period  # Adjust the window size as needed
+    window_size = transit_duration * period * 2# Adjust the window size as needed
     window_mask = (kepler_phase >= (transit_midpoint - window_size)) & (kepler_phase <= (transit_midpoint + window_size))
 
     time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
 
+    #full_pg_flux = full_pg_flux / medfilt(full_pg_flux, kernel_size=51)
+
     # Calculate chi-squared within the window
-    chi2 = np.sum((flux[window_mask] - full_pg_flux) ** 2 / error[window_mask] ** 2) / (np.sum(np.ones_like(flux[window_mask])) ** 2)
-    difference_in_chi2 = abs(chi2 - 1)
+    chi2 =np.sum((flux[window_mask] - full_pg_flux) ** 2 / error[window_mask] ** 2) 
+    normalisdChi2 = len(flux[window_mask]) **2
+
+    chi2 = chi2
+    difference_in_chi2 = abs(chi2-1)
     return difference_in_chi2
+
+def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, error, transit_duration):
+    planets = [
+        {
+            'period': period,
+            'rp': params[3],
+            'a': params[0],
+            'incl': np.pi / 2,
+            'transit_midpoint': period/2
+        }
+    ]
+    u1 = params[1]
+    u2 = params[2]
+    observation_noise = 0
+
+    time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
+    pg_model_lightcurve = pg_model_lightcurve / np.median(pg_model_lightcurve)
+
+    pg_generated_phase = phase_fold(time, period,pg_model_lightcurve)
+    pg_nodel_lightcurve_projected_onto_kepler_phase = interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve)
+
+    transit_midpoint = period/2
+    window_size = 0.1#transit_duration * period 
+    
+    window_mask = (kepler_phase >= (0.5 - window_size)) & (kepler_phase <= (0.5 + window_size))
+
+    # plt.plot(kepler_phase, flux)
+    # plt.plot(kepler_phase, pg_nodel_lightcurve_projected_onto_kepler_phase)
+    # plt.show()
+
+    #time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
+
+    lad_value = np.sum((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)
+    return lad_value
+
+def interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve):
+    interpolated_values = np.zeros_like(kepler_phase)
+    
+    for i, kp in enumerate(kepler_phase):
+        closest_index = np.argmin(np.abs(pg_generated_phase - kp))
+        interpolated_values[i] = pg_model_lightcurve[closest_index]
+    
+    return interpolated_values
 
 def interpolate_lightcurve(time, pg_model_lightcurve, bls_model_flux, total_time):
     # Create a time array matching bls_model_flux length
