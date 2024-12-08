@@ -14,21 +14,49 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_a
     y_value_of_orbit = semi_major_axis * np.sin(orbit)
     return x_value_of_orbit, y_value_of_orbit
 
-def calculate_limb_darkened_light_curve(x_value_of_orbit,y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
+def calculate_limb_darkened_light_curve(light_curve,x_value_of_orbit,y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
     star_radius_in_au = star_radius * (1/215)  # convert Stellar radius to AU 
     planet_radius_in_au = planet_radius * (1/215) # convert planet radius to AU
-    light_curve = np.ones_like(x_value_of_orbit) # this is the same length as the time array as specified previusly
-    inside_transit = abs(y_value_of_orbit) < star_radius_in_au + planet_radius_in_au # this checks if the planet is passing infront of the sta
-    # mu = np.sqrt(1 - valid_normalised_distance**2)
-    # intensity = 1 - limb_darkening_u1 * (1 - mu) - limb_darkening_u2 * (1 - mu)**2
-    # light_curve[inside_transit] -= normalised_planet_radius**2 * intensity[inside_transit]
-    light_curve[inside_transit] = light_curve[inside_transit] * (planet_radius_in_au/star_radius_in_au)**2
+    
+    transiting = abs(y_value_of_orbit) < (star_radius_in_au -planet_radius_in_au)# this checks if the planet is passing infront of the sta
+    partial_transit = (abs(y_value_of_orbit) < (star_radius_in_au + planet_radius_in_au)) & (abs(y_value_of_orbit) > (star_radius_in_au - planet_radius_in_au)) # this checks if the planet is passing in front of the star
 
+    infront_of_star = x_value_of_orbit > 0
+    inside_transit = transiting * infront_of_star
+    partial_transit = partial_transit * infront_of_star
+    all_transits = inside_transit + partial_transit
+    #inside_partial_transit = partial_transit * infront_of_star
+    # light_curve[inside_transit] -= normalised_planet_radius**2 * intensity[inside_transit]
+
+    transit_depth = (planet_radius/star_radius)**2
+    print(transit_depth)
+
+    length_of_planet_transitioning = (star_radius_in_au + planet_radius_in_au - abs(y_value_of_orbit[partial_transit]) )/ star_radius_in_au
+    print(length_of_planet_transitioning)
+    print(np.max(length_of_planet_transitioning))
+    print(planet_radius_in_au)   
+    partial_transit_depth = (planet_radius_in_au/star_radius_in_au)**2 * length_of_planet_transitioning
+    print(partial_transit_depth)
+    print(np.max(partial_transit_depth))
+
+    avergae_intensity = (2 + limb_darkening_u2*(1 - limb_darkening_u1))/(2+limb_darkening_u2)
+
+    normalised_distance_from_center_of_star_inside_transit = np.sqrt(1-(y_value_of_orbit[inside_transit]/star_radius_in_au)**2)
+    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_inside_transit**limb_darkening_u2) 
+    normalised_limb_darkening_effect_inside_transit = limb_darkening_effect * avergae_intensity
+
+    normalised_distance_from_center_of_star_partial_transit = np.sqrt(1-(y_value_of_orbit[partial_transit]/star_radius_in_au)**2)
+    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_partial_transit**limb_darkening_u2)
+    normalised_limb_darkening_effect_partial_transit = limb_darkening_effect * avergae_intensity
+
+
+    light_curve[inside_transit] = light_curve[inside_transit] - (transit_depth * normalised_limb_darkening_effect_inside_transit)
+    light_curve[partial_transit] = light_curve[partial_transit] - (partial_transit_depth * normalised_limb_darkening_effect_partial_transit)
     return light_curve
 
 def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = False):
     time_array = np.arange(0, total_time, cadence)
-    combined_light_curve = np.ones_like(time_array)
+    light_curve = np.ones_like(time_array)
     star_radius_squared = star_radius ** 2
 
     for planet in planets:
@@ -39,9 +67,7 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
         transit_midpoint = planet['transit_midpoint']
 
         x_value_of_orbit,y_value_of_orbit = calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_array)
-        light_curve_model = calculate_limb_darkened_light_curve(x_value_of_orbit,y_value_of_orbit, planet_radius, u1, u2, star_radius)
-
-        combined_light_curve *= light_curve_model
+        combined_light_curve = calculate_limb_darkened_light_curve(light_curve,x_value_of_orbit,y_value_of_orbit, planet_radius, u1, u2, star_radius)
 
     flux_with_noise = combined_light_curve + np.random.normal(0, observation_noise, len(time_array))
 
@@ -58,15 +84,15 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
     return time_array, flux_with_noise, combined_light_curve
 
 def limb_darken_values():
-    u1 = 0.3#np.random.uniform(0.1, 1)
-    u2 = 0.2#np.random.uniform(0.0, 0.5)
-    if 1- (u1 + u2) <0 :
-        return limb_darken_values()
+    u1 = 0.85#np.random.uniform(0.1, 1)
+    u2 = 0.4#np.random.uniform(0.0, 0.5)
+    # if 1- (u1 + u2) <0 :
+    #     return limb_darken_values()
     return u1, u2
 
 def generate_random_planet_systems(num_systems, max_planets_per_system, total_time, force_max_planets=False):
     systems = []
-    observation_noise = 0.0001#np.random.uniform(0.0002, 0.0004)
+    observation_noise = 0 #0.0001#np.random.uniform(0.0002, 0.0004)
     for _ in range(num_systems):
 
         if force_max_planets:
@@ -80,8 +106,8 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
         total_time = total_time
 
         for _ in range(num_planets):
-            period = 800#np.random.uniform(1, 50)
-            planet_radius = 0.025#np.random.uniform(0.000, 0.05)
+            period = 100#np.random.uniform(1, 50)
+            planet_radius = 0.1#np.random.uniform(0.000, 0.05)
             semi_major_axis = 0.107#np.random.uniform(0.2,1)#(period**2)**(1/3)
             eccentricity = np.random.uniform(0, 0.3)
             inclination = np.pi / 2

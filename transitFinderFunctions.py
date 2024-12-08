@@ -404,7 +404,7 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     }
 
     planet_radius = planet_radius
-    bounds = [(0.005, 0.5), (0.1, 0.5), (0.1, 0.5), (planet_radius*0.5, planet_radius*1.5)]
+    bounds = [(0.005, 0.5), (0.7, 1), (0.2, 0.6), (planet_radius*0.5, planet_radius*1.5)]
     initial_guess = [0.2, 0.3, 0.2, planet_radius]
 
     print(f"initial guess: {initial_guess}")
