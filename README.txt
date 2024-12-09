@@ -29,3 +29,6 @@ Code should show not tell.
 Algoithm over assumption.
 -> If a value or an input could be found algoirthmically it should.
 -> an example is the peak thresholds in 'run_lomb_scargle_analysis' where the peak thresholds as and conditions are determined algoirthmically, but for this case I did allow a manual threshold as that could prove useful when prexisting knowledge is known about the output.
+
+Brackets to imply multiplication.
+-> in some instases where they are not actually needed brackets will still be added to imply multiplication between 2 variables, this is to make the order of operations clear to the reader

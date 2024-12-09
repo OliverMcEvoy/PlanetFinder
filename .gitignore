@@ -12,3 +12,5 @@ TransitFindZero*
 theBig*
 *.pth
 *hdf5
+kepler-env/*
+kep*

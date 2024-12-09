@@ -51,12 +51,6 @@ class ExoplanetDataset(Dataset):
             if t in time_to_index:
                 full_flux_with_noise[time_to_index[t]] = flux
 
-        # Apply median filter
-        filtered_flux = medfilt(full_flux_with_noise, kernel_size=5)
-
-        # Normalize flux
-        full_flux_with_noise /= filtered_flux
-
         return (
             torch.tensor(flux_with_noise, dtype=torch.float32),
             torch.tensor(periods, dtype=torch.float32),
@@ -75,18 +69,18 @@ class TransitModel(nn.Module):
     def __init__(self):
         super(TransitModel, self).__init__()
         self.conv_layers = nn.Sequential(
-            nn.Conv1d(1, 32, kernel_size=5, padding=2),
+            nn.Conv1d(1, 16, kernel_size=5, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv1d(16, 32, kernel_size=5, padding=2),
             nn.ReLU(inplace=True),
             nn.Conv1d(32, 64, kernel_size=5, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv1d(64, 128, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
             nn.MaxPool1d(2)
         )
-        self.fc1 = nn.Linear(128 * 39151, 256)
-        self.dropout = nn.Dropout(p=0.2)
-        self.fc2 = nn.Linear(256, 10)
-        self.fc3 = nn.Linear(256, 1)
+        self.fc1 = nn.Linear(64 * 38400, 128)
+        self.dropout = nn.Dropout(p=0.3)
+        self.fc2 = nn.Linear(128, 10)
+        self.fc3 = nn.Linear(128, 1)
 
     def forward(self, x):
         x = x.unsqueeze(1)  # Add channel dimension
@@ -150,7 +144,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
         subset_size = int(len(dataset) * data_percentage)
         dataset = Subset(dataset, range(subset_size))
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
-    optimizer = optim.Adam(model.parameters(), lr=1e-6, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
     model.train()
 
     losses = []
@@ -211,9 +205,9 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
 # Main Function
 def main(hdf5_path, data_percentage=1.0):
-    device = "cpu"#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=10, batch_size=1, data_percentage=data_percentage)
 
     save_model(model, "CPU_1_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth")
 
@@ -233,5 +227,5 @@ def load_model(path, device):
     return model
 
 if __name__ == "__main__":
-    hdf5_path = "TransitFindOneForGap.hdf5"
-    main(hdf5_path, data_percentage=0.01)
+    hdf5_path = "planet_systems.hdf5"
+    main(hdf5_path, data_percentage=1)

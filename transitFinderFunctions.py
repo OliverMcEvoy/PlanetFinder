@@ -397,9 +397,9 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     }
 
     minimize_options = {
-        'maxiter': 100,
-        'disp': True,
-        'ftol': 0.0000001,
+        'maxiter': 50,
+        'disp': False,
+        'ftol': 0.0001,
 
     }
 
@@ -410,17 +410,13 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     bounds = [(guess_for_sma * 0.25, guess_for_sma*2), (0.7, 1), (0.2, 0.6), (planet_radius*0.25, planet_radius*2)]
     initial_guess = [guess_for_sma , 0.85, 0.25, planet_radius]
 
-    print(f"initial guess: {initial_guess}")
-
     if method == 'minimize':
         result = minimize(lad, initial_guess, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), 
                           method='SLSQP', bounds=bounds, options=minimize_options)
         best_fit_params = result.x
-        print('done minimising')
     elif method == 'differential_evolution':
         result = differential_evolution(lad, bounds, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), **differential_options)
         best_fit_params = result.x
-        print('done differential evolution')
     elif method == 'Nelder-Mead':
         result = minimize(lad, initial_guess, args=(period, total_time, filtered_phase, star_radius, flux, cadence, error, transit_duration), 
                           method='Nelder-Mead', bounds=bounds, options=minimize_options)
@@ -512,12 +508,32 @@ def plot_phase_folded_light_curves(all_results):
         for i, method_results in enumerate(all_results):
             print(f"Plotting best fit model for method {methods[i]}")
             result = method_results[j]
-            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['flux'][mask], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
-            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['bls_model_flux'][mask], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
+
+            best_fit_params = result['best_fit_params']
+            period = result['period']
+
+            planets = [
+                {
+                    'period': period,
+                    'rp':best_fit_params[3],
+                    'a':best_fit_params[0],
+                    'incl': np.pi / 2,
+                    'transit_midpoint': period/2
+                }
+            ]
+            pg_time, best_fit_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, 1600, 1, 0, snr_threshold=1, u1=best_fit_params[1], u2=best_fit_params[2], cadence=0.0005, simulate_gap_in_data=False)
+
+            #best_fit_model_lightcurve = best_fit_model_lightcurve / np.median(best_fit_model_lightcurve)
+
+            pg_generated_phase = phase_fold(pg_time, period, best_fit_model_lightcurve)
+
+            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['flux'][mask], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none',markersize=1)
+            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['bls_model_flux'][mask], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none',markersize=1)
             axs[j][i+1].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {j + 1}", fontsize=16)
             axs[j][i+1].set_ylabel('Normalized Flux')
             axs[j][i+1].legend()
-            axs[j][i + 1].errorbar(result['filtered_phase'][mask], result['best_fit_model_lightcurve'][mask], fmt='o', color='blue', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none')
+            axs[j][i + 1].errorbar(result['filtered_phase'][mask], result['best_fit_model_lightcurve'][mask], fmt='o', color='blue', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none',markersize=1)
+            axs[j][i + 1].errorbar(pg_generated_phase, best_fit_model_lightcurve, fmt='o', color='red', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none',markersize=1)
             axs[j][i + 1].set_title(f"Best Fit Model Light Curve for Candidate Planet {j + 1} ({methods[i]})", fontsize=16)
             axs[j][i + 1].legend()
 
@@ -592,7 +608,7 @@ def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, er
 
     #time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
 
-    lad_value = np.sum(((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)/error[window_mask])
+    lad_value = np.sum(((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)/(error[window_mask]))
     return lad_value
 
 def interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve):

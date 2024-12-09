@@ -9,12 +9,10 @@ import argparse
 import matplotlib.pyplot as plt
 
 def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_array):
-    orbit = np.pi *2* (time_array + transit_midpoint) / (period ) # this is due to projected distance have a frequency doubled to what it should be 
+    orbit = np.pi *2* (time_array + transit_midpoint) / (period ) #
     x_value_of_orbit = semi_major_axis * np.cos(orbit)
     y_value_of_orbit = semi_major_axis * np.sin(orbit)
     return x_value_of_orbit, y_value_of_orbit
-
-import numpy as np
 
 def calculate_limb_darkened_light_curve(light_curve, x_value_of_orbit, y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
     star_radius_in_au = star_radius * (1/215)  # convert Stellar radius to AU 
@@ -47,7 +45,7 @@ def calculate_limb_darkened_light_curve(light_curve, x_value_of_orbit, y_value_o
     light_curve[partial_transit] = light_curve[partial_transit] - (partial_transit_depth * normalised_limb_darkening_effect_partial_transit)
     return light_curve
 
-def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = False):
+def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, observation_noise=0.001, snr_threshold=5, u1=0.3, u2=0.2, cadence=0.0208333, simulate_gap_in_data = True):
     time_array = np.arange(0, total_time, cadence)
     light_curve = np.ones_like(time_array)
     star_radius_squared = star_radius ** 2
@@ -62,7 +60,7 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
         x_value_of_orbit,y_value_of_orbit = calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_array)
         combined_light_curve = calculate_limb_darkened_light_curve(light_curve,x_value_of_orbit,y_value_of_orbit, planet_radius, u1, u2, star_radius)
 
-    flux_with_noise = combined_light_curve + np.random.normal(0, observation_noise, len(time_array))
+    flux_with_noise = combined_light_curve *(1 + np.random.normal(0, observation_noise, len(time_array)))
 
     if simulate_gap_in_data:
         # Introduce random gaps and fill them with 1
@@ -77,15 +75,15 @@ def generate_multi_planet_light_curve(planets, total_time, star_radius=1.0, obse
     return time_array, flux_with_noise, combined_light_curve
 
 def limb_darken_values():
-    u1 = 0.85#np.random.uniform(0.1, 1)
-    u2 = 0.4#np.random.uniform(0.0, 0.5)
+    u1 = np.random.uniform(0.7, 0.9)
+    u2 = np.random.uniform(0.2, 0.3)
     # if 1- (u1 + u2) <0 :
     #     return limb_darken_values()
     return u1, u2
 
 def generate_random_planet_systems(num_systems, max_planets_per_system, total_time, force_max_planets=False):
     systems = []
-    observation_noise = 0 #0.0001#np.random.uniform(0.0002, 0.0004)
+    observation_noise = np.random.uniform(0.00015, 0.00025)
     for _ in range(num_systems):
 
         if force_max_planets:
@@ -95,14 +93,14 @@ def generate_random_planet_systems(num_systems, max_planets_per_system, total_ti
 
         planets = []
 
-        star_radius = np.random.uniform(1.0, 2.0)
+        star_radius = 1
         total_time = total_time
 
         for _ in range(num_planets):
-            period = 100#np.random.uniform(1, 50)
-            planet_radius = 0.1#np.random.uniform(0.000, 0.05)
-            semi_major_axis = 0.107#np.random.uniform(0.2,1)#(period**2)**(1/3)
-            eccentricity = np.random.uniform(0, 0.3)
+            period = np.random.uniform(1, 50)
+            planet_radius = np.random.uniform(0.01, 0.04)
+            semi_major_axis = (period/365) ** (2/3) *np.random.uniform(0.75, 1.25)
+            eccentricity = 0#np.random.uniform(0, 0.3)
             inclination = np.pi / 2
             transit_midpoint = np.random.uniform(0, period)
 
@@ -143,10 +141,11 @@ def process_system(system, snr_threshold, total_time, cadence):
     )
 
     detectable_planets = []
-    # for planet in system['planets']:
-    #     snr = np.max(np.abs(combined_light_curve - 1)) / system['observation_noise']
-    #     if snr >= snr_threshold:
-    #         detectable_planets.append(planet)
+    standard_deviation = np.std(flux_with_noise)
+    for planet in system['planets']:
+        snr = (planet['rp'] *2 / standard_deviation) * (np.floor(total_time/planet['period']) ** 0.5)
+        if snr >= snr_threshold:
+            detectable_planets.append(planet)
 
     num_detectable_planets = len(detectable_planets)
     total_planets = len(system['planets'])
@@ -156,6 +155,7 @@ def process_system(system, snr_threshold, total_time, cadence):
 def plot_light_curve(time_array, flux_with_noise, combined_light_curve):
     plt.figure(figsize=(10, 6))
     plt.plot(time_array, flux_with_noise, label='Light Curve with Noise', color='red')
+    plt.plot(time_array, combined_light_curve, label='Light Curve', color='blue')
     plt.xlabel('Time (days)')
     plt.ylabel('Flux')
     plt.legend()
