@@ -390,22 +390,25 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     planet_radius = estimate_planet_radius(result["depth"], star_radius)
 
     differential_options = {
-        'maxiter': 20,
-        'popsize': 40,
+        'maxiter': 15,
+        'popsize': 10,
         'disp': False,
         'tol': 0.000001,
     }
 
     minimize_options = {
-        'maxiter': 2000,
-        'disp': False,
-        'ftol': 0.000001,
+        'maxiter': 100,
+        'disp': True,
+        'ftol': 0.0000001,
 
     }
 
+    #can be done as M of sun same as our own
+    guess_for_sma = (period/365)**(2/3)
+
     planet_radius = planet_radius
-    bounds = [(0.005, 0.5), (0.7, 1), (0.2, 0.6), (planet_radius*0.5, planet_radius*1.5)]
-    initial_guess = [0.2, 0.3, 0.2, planet_radius]
+    bounds = [(guess_for_sma * 0.25, guess_for_sma*2), (0.7, 1), (0.2, 0.6), (planet_radius*0.25, planet_radius*2)]
+    initial_guess = [guess_for_sma , 0.85, 0.25, planet_radius]
 
     print(f"initial guess: {initial_guess}")
 
@@ -441,7 +444,7 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
     ]
     pg_time, best_fit_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, 0, snr_threshold=5, u1=best_fit_u1, u2=best_fit_u2, cadence=cadence, simulate_gap_in_data=False)
 
-    best_fit_model_lightcurve = best_fit_model_lightcurve / np.median(best_fit_model_lightcurve)
+    #best_fit_model_lightcurve = best_fit_model_lightcurve / np.median(best_fit_model_lightcurve)
 
     pg_generated_phase = phase_fold(pg_time, period, best_fit_model_lightcurve)
     pg_nodel_lightcurve_projected_onto_kepler_phase = interoplate_phase_folded_light_curve(filtered_phase, pg_generated_phase, best_fit_model_lightcurve)
@@ -461,7 +464,9 @@ def calculate_fit_for_period(result, time, flux, error, total_time, star_radius,
         'final_chi2': final_chi2,
         'best_fit_params': best_fit_params,
         'planet_radius': planet_radius,
-        'method': method
+        'method': method,
+        'transit_duration': transit_duration,
+        'period': period
     }
 
 
@@ -486,10 +491,8 @@ def plot_phase_folded_light_curves(all_results):
     num_candidates = len(all_results[0])
     fig, axs = plt.subplots(num_candidates, 4, figsize=(20, 6 * num_candidates))
 
-
     #methods = ['minimize', 'differential_evolution', 'Nelder-Mead']
     methods = ['minimize','Nelder-Mead']
-
 
     if num_candidates == 1:
         axs = [axs]
@@ -497,8 +500,10 @@ def plot_phase_folded_light_curves(all_results):
     for j in range(num_candidates):
         # Left plot: Filtered Flux and BLS Model Flux (first method)
         result = all_results[0][j]
-        axs[j][0].errorbar(result['filtered_phase'], result['flux'], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
-        axs[j][0].errorbar(result['filtered_phase'], result['bls_model_flux'], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
+        window_size = result['transit_duration'] * 2  / result['period']
+        mask = (result['filtered_phase'] >= 0.5 - window_size) & (result['filtered_phase'] <= 0.5 + window_size)
+        axs[j][0].errorbar(result['filtered_phase'][mask], result['flux'][mask], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
+        axs[j][0].errorbar(result['filtered_phase'][mask], result['bls_model_flux'][mask], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
         axs[j][0].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {j + 1}", fontsize=16)
         axs[j][0].set_ylabel('Normalized Flux')
         axs[j][0].legend()
@@ -507,7 +512,12 @@ def plot_phase_folded_light_curves(all_results):
         for i, method_results in enumerate(all_results):
             print(f"Plotting best fit model for method {methods[i]}")
             result = method_results[j]
-            axs[j][i + 1].errorbar(result['filtered_phase'], result['best_fit_model_lightcurve'], fmt='o', color='blue', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none')
+            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['flux'][mask], fmt='o', color='black', alpha=0.5, label="Filtered Flux", linestyle='none')
+            axs[j][i+1].errorbar(result['filtered_phase'][mask], result['bls_model_flux'][mask], fmt='o', color='green', alpha=0.5, label="Filtered Transit Model", linestyle='none')
+            axs[j][i+1].set_title(f"Filtered Phase-Folded Light Curve for Candidate Planet {j + 1}", fontsize=16)
+            axs[j][i+1].set_ylabel('Normalized Flux')
+            axs[j][i+1].legend()
+            axs[j][i + 1].errorbar(result['filtered_phase'][mask], result['best_fit_model_lightcurve'][mask], fmt='o', color='blue', alpha=0.5, label=f"Best Fit Model ({methods[i]})", linestyle='none')
             axs[j][i + 1].set_title(f"Best Fit Model Light Curve for Candidate Planet {j + 1} ({methods[i]})", fontsize=16)
             axs[j][i + 1].legend()
 
@@ -515,16 +525,22 @@ def plot_phase_folded_light_curves(all_results):
     plt.tight_layout()
     plt.show()
 
-def phase_fold(time, period, flux=None,bls_model_flux=None):
-    phase = ((time % period) / period)
-    if flux is not None:
-        min_flux_phase = ((time[np.argmin(flux)] % period) / period)
-        phase = (phase - min_flux_phase) % 1
+def phase_fold(time, period, flux=None, bls_model_flux=None):
+    phase = (time % period) / period
     if bls_model_flux is not None:
-        min_flux_phase = ((time[np.argmin(bls_model_flux)] % period) / period)
-        phase = (phase - min_flux_phase) % 1
-    
-    phase = (phase + 0.5) % 1  # Shift phase to center the transit
+        # Identify indices where the flux is at the lower level (in transit)
+        in_transit = bls_model_flux < np.max(bls_model_flux)
+        # Find the times corresponding to the transit
+        transit_times = time[in_transit]
+        # Calculate the midpoint of the transit times
+        if len(transit_times) > 0:
+            transit_midpoint = np.mean(transit_times % period) / period
+            phase = (phase - transit_midpoint + 0.5) % 1
+    elif flux is not None:
+        min_flux_phase = (time[np.argmin(flux)] % period) / period
+        phase = (phase - min_flux_phase + 0.5) % 1
+    else:
+        phase = (phase + 0.5) % 1  # Shift phase to center the transit
     return phase
 def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None):
     phase = ((time % period) / period - 0.5) % 1
@@ -545,44 +561,6 @@ def get_filtered_phase_flux(time, flux, model_flux, period, duration, error=None
     filtered_error = error[mask]
     return filtered_phase, filtered_flux, filtered_error, filtered_model_flux
 
-def chi_squared(params, period, total_time,kepler_phase, star_radius, flux, cadence, error,transit_duration):
-    planets = [
-        {
-            'period': period,
-            'rp': params[4],
-            'a': params[0],
-            'incl': 0,#np.pi / 2,
-            'transit_midpoint': params[1]
-        }
-    ]
-    u1 = params[2]
-    u2 = params[3]
-    observation_noise = 0
-
-    time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
-    #pg_model_lightcurve = pg_model_lightcurve / medfilt(pg_model_lightcurve, kernel_size=51)
-    pg_model_lightcurve = pg_model_lightcurve / np.median(pg_model_lightcurve)
-
-    # Phase fold the time and model light curve
-    phase = phase_fold(time, period)
-
-    # Define a window around the transit midpoint
-    transit_midpoint = params[1]
-    window_size = transit_duration * period * 2# Adjust the window size as needed
-    window_mask = (kepler_phase >= (transit_midpoint - window_size)) & (kepler_phase <= (transit_midpoint + window_size))
-
-    time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
-
-    #full_pg_flux = full_pg_flux / medfilt(full_pg_flux, kernel_size=51)
-
-    # Calculate chi-squared within the window
-    chi2 =np.sum((flux[window_mask] - full_pg_flux) ** 2 / error[window_mask] ** 2) 
-    normalisdChi2 = len(flux[window_mask]) **2
-
-    chi2 = chi2
-    difference_in_chi2 = abs(chi2-1)
-    return difference_in_chi2
-
 def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, error, transit_duration):
     planets = [
         {
@@ -598,13 +576,13 @@ def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, er
     observation_noise = 0
 
     time, pg_model_lightcurve, _ = pg.generate_multi_planet_light_curve(planets, total_time, star_radius, observation_noise, snr_threshold=0, u1=u1, u2=u2, cadence=cadence, simulate_gap_in_data=False)
-    pg_model_lightcurve = pg_model_lightcurve / np.median(pg_model_lightcurve)
+    #pg_model_lightcurve = pg_model_lightcurve / np.median(pg_model_lightcurve)
 
     pg_generated_phase = phase_fold(time, period,pg_model_lightcurve)
     pg_nodel_lightcurve_projected_onto_kepler_phase = interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve)
 
     transit_midpoint = period/2
-    window_size = 0.1#transit_duration * period 
+    window_size = transit_duration * 2 / period
     
     window_mask = (kepler_phase >= (0.5 - window_size)) & (kepler_phase <= (0.5 + window_size))
 
@@ -614,7 +592,7 @@ def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, er
 
     #time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
 
-    lad_value = np.sum((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)
+    lad_value = np.sum(((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)/error[window_mask])
     return lad_value
 
 def interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve):

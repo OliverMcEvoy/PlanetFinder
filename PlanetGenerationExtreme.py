@@ -14,41 +14,34 @@ def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis,  time_a
     y_value_of_orbit = semi_major_axis * np.sin(orbit)
     return x_value_of_orbit, y_value_of_orbit
 
-def calculate_limb_darkened_light_curve(light_curve,x_value_of_orbit,y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
+import numpy as np
+
+def calculate_limb_darkened_light_curve(light_curve, x_value_of_orbit, y_value_of_orbit, planet_radius, limb_darkening_u1, limb_darkening_u2, star_radius):
     star_radius_in_au = star_radius * (1/215)  # convert Stellar radius to AU 
     planet_radius_in_au = planet_radius * (1/215) # convert planet radius to AU
     
-    transiting = abs(y_value_of_orbit) < (star_radius_in_au -planet_radius_in_au)# this checks if the planet is passing infront of the sta
-    partial_transit = (abs(y_value_of_orbit) < (star_radius_in_au + planet_radius_in_au)) & (abs(y_value_of_orbit) > (star_radius_in_au - planet_radius_in_au)) # this checks if the planet is passing in front of the star
+    transiting = abs(y_value_of_orbit) < (star_radius_in_au - planet_radius_in_au)  # this checks if the planet is passing in front of the star
+    partial_transit = (abs(y_value_of_orbit) < (star_radius_in_au + planet_radius_in_au)) & (abs(y_value_of_orbit) > (star_radius_in_au - planet_radius_in_au))  # this checks if the planet is passing in front of the star
 
     infront_of_star = x_value_of_orbit > 0
     inside_transit = transiting * infront_of_star
     partial_transit = partial_transit * infront_of_star
     all_transits = inside_transit + partial_transit
-    #inside_partial_transit = partial_transit * infront_of_star
-    # light_curve[inside_transit] -= normalised_planet_radius**2 * intensity[inside_transit]
 
-    transit_depth = (planet_radius/star_radius)**2
-    print(transit_depth)
+    transit_depth = (planet_radius / star_radius) ** 2
 
-    length_of_planet_transitioning = (star_radius_in_au + planet_radius_in_au - abs(y_value_of_orbit[partial_transit]) )/ star_radius_in_au
-    print(length_of_planet_transitioning)
-    print(np.max(length_of_planet_transitioning))
-    print(planet_radius_in_au)   
-    partial_transit_depth = (planet_radius_in_au/star_radius_in_au)**2 * length_of_planet_transitioning
-    print(partial_transit_depth)
-    print(np.max(partial_transit_depth))
+    length_of_planet_transitioning = (star_radius_in_au + planet_radius_in_au - abs(y_value_of_orbit[partial_transit])) / star_radius_in_au
+    partial_transit_depth = (planet_radius_in_au / star_radius_in_au) ** 2 * length_of_planet_transitioning
 
-    avergae_intensity = (2 + limb_darkening_u2*(1 - limb_darkening_u1))/(2+limb_darkening_u2)
+    average_intensity = (2 + limb_darkening_u2 * (1 - limb_darkening_u1)) / (2 + limb_darkening_u2)
 
-    normalised_distance_from_center_of_star_inside_transit = np.sqrt(1-(y_value_of_orbit[inside_transit]/star_radius_in_au)**2)
-    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_inside_transit**limb_darkening_u2) 
-    normalised_limb_darkening_effect_inside_transit = limb_darkening_effect * avergae_intensity
+    normalised_distance_from_center_of_star_inside_transit = np.sqrt(np.maximum(0.0000001, 1 - (y_value_of_orbit[inside_transit] / (star_radius_in_au)) ** 2))
+    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_inside_transit ** limb_darkening_u2)
+    normalised_limb_darkening_effect_inside_transit = limb_darkening_effect * average_intensity
 
-    normalised_distance_from_center_of_star_partial_transit = np.sqrt(1-(y_value_of_orbit[partial_transit]/star_radius_in_au)**2)
-    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_partial_transit**limb_darkening_u2)
-    normalised_limb_darkening_effect_partial_transit = limb_darkening_effect * avergae_intensity
-
+    normalised_distance_from_center_of_star_partial_transit = np.sqrt(np.maximum(0.00000001, 1 - (y_value_of_orbit[partial_transit] / (star_radius_in_au)) ** 2))
+    limb_darkening_effect = 1 - limb_darkening_u1 * (1 - normalised_distance_from_center_of_star_partial_transit ** limb_darkening_u2)
+    normalised_limb_darkening_effect_partial_transit = limb_darkening_effect * average_intensity
 
     light_curve[inside_transit] = light_curve[inside_transit] - (transit_depth * normalised_limb_darkening_effect_inside_transit)
     light_curve[partial_transit] = light_curve[partial_transit] - (partial_transit_depth * normalised_limb_darkening_effect_partial_transit)
@@ -150,10 +143,10 @@ def process_system(system, snr_threshold, total_time, cadence):
     )
 
     detectable_planets = []
-    for planet in system['planets']:
-        snr = np.max(np.abs(combined_light_curve - 1)) / system['observation_noise']
-        if snr >= snr_threshold:
-            detectable_planets.append(planet)
+    # for planet in system['planets']:
+    #     snr = np.max(np.abs(combined_light_curve - 1)) / system['observation_noise']
+    #     if snr >= snr_threshold:
+    #         detectable_planets.append(planet)
 
     num_detectable_planets = len(detectable_planets)
     total_planets = len(system['planets'])
