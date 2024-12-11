@@ -425,14 +425,8 @@ def calculate_fit_for_period(
             'maxiter': 50,
             'disp': False,
             'ftol': 1e-4,
-        }
+        }        flux_with_noise /= np.abs(flux_with_noise).max()
 
-    if nelder_mead_options is None:
-        nelder_mead_options = {
-            'maxiter': 100,
-            'disp': False,
-            'fatol': 1e-4,
-        }
 
     if differential_options is None:
         differential_options = {
@@ -823,26 +817,7 @@ def print_best_fit_parameters(all_results,bls_analysis):
         chi2_np = np.array(chi2_list[period])
         avg_chi2 = np.mean(chi2_np)
         std_chi2 = np.std(chi2_np)
-        period_floor = np.floor(period)
-        data.append([
-            f"{period:.5f} ± {period_uncertainties[period_floor]:.5f}",
-            f"{avg_params[0]:.4f} ± {std_params[0]:.4f}",
-            f"{avg_params[3]:.4f} ± {std_params[3]:.4f}",
-            f"{avg_chi2:.4f} ± {std_chi2:.4f}",
-        ])
-
-    df = pd.DataFrame(data, columns=columns)
-    
-    def make_pretty(styler):
-        styler.set_caption("Table: Best Fit Parameters for Each Planet")
-        styler.format(precision=3, thousands=",", decimal=".")  
-        return styler
-    
-    styled_df = df.style.pipe(make_pretty)
-    display(styled_df)
-
-    # Calculate and print total average and standard deviation for u1 and u2
-    u1_np = np.array(u1_values)
+        period_floor = np.floor(period)(
     u2_np = np.array(u2_values)
     avg_u1 = np.mean(u1_np)
     std_u1 = np.std(u1_np)
@@ -866,20 +841,7 @@ def plot_light_curve(time,flux,flux_error=None):
     plt.show()
 
 def summarize_results(results_list,stellar_info):
-    print("\nDetected Planet Candidates:")
-    print("-" * 40)
-
-    if stellar_info:
-        stellar_radius = stellar_info["stellar_radius"]
-        print(f"Stellar Radius: {stellar_radius} Solar Radii")
-        print(f"Stellar Temperature: {stellar_info['temperature']} K")
-        print("-" * 40)
-
-    for i, result in enumerate(results_list):
-            
-            print()
-            print("-" * 40)
-            print(f"Candidate {i+1}:") 
+    print("\nDetected Planet Candidates:")(
             print(f"  Initial Period = {result['candidate_period']:.2f} days")
             print(f"  Refined Period = {result['refined_period']:.2f} days")
             print(f"  Transit Depth  = {result['depth']:.2e}")
