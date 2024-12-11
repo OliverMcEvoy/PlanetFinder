@@ -24,6 +24,7 @@ import glob
 from scipy.optimize import curve_fit
 from scipy.optimize import differential_evolution, minimize, basinhopping
 import matplotlib.ticker as ticker
+from IPython.display import display, Math
 
 
 
@@ -255,7 +256,7 @@ def estimate_planet_radius(transit_depth, stellar_radius):
     planet_radius = np.sqrt(transit_depth) * stellar_radius
     return planet_radius
 
-def analyze_period(period, time, flux, error, resolution, duration_range, allowed_deviation):
+def analyze_period(period, time, flux, error, resolution, duration_range, allowed_deviation,n_bootstrap):
     try:
         results, power, periods, best_period, best_transit_model, period_uncertainty, duration_uncertainty, transit_time_uncertainty = run_bls_analysis(
             time,
@@ -264,7 +265,8 @@ def analyze_period(period, time, flux, error, resolution, duration_range, allowe
             resolution,
             min_period=period * (1 - allowed_deviation),
             max_period=period * (1 + allowed_deviation),
-            duration_range=duration_range
+            duration_range=duration_range,
+            n_bootstrap=n_bootstrap,
         )
 
         # Filter out shallow transits
@@ -288,7 +290,7 @@ def analyze_period(period, time, flux, error, resolution, duration_range, allowe
         }
     except Exception as e:
         return {"error": str(e), "period": period}
-def analyze_peaks_with_bls(kepler_dataframe, peak_periods, resolution=10000, duration_range=(0.01, 0.5), allowed_deviation=0.05):
+def analyze_peaks_with_bls(kepler_dataframe, peak_periods, resolution=10000, duration_range=(0.01, 0.5), allowed_deviation=0.05,n_bootstrap=100):
     """
     Analyze multiple period candidates using the BLS algorithm.
     """
@@ -301,7 +303,7 @@ def analyze_peaks_with_bls(kepler_dataframe, peak_periods, resolution=10000, dur
             tqdm(
                 pool.starmap(
                     analyze_period, 
-                    [(period, time, flux, error, resolution, duration_range, allowed_deviation) for period in peak_periods]
+                    [(period, time, flux, error, resolution, duration_range, allowed_deviation,n_bootstrap) for period in peak_periods]
                 ),
                 total=len(peak_periods),
                 desc="Analyzing Periods"
@@ -758,8 +760,9 @@ def lad(params, period, total_time, kepler_phase, star_radius, flux, cadence, er
 
     #time, full_pg_flux = interpolate_lightcurve(phase, pg_model_lightcurve, flux[window_mask], total_time)
 
-    lad_value = np.sum(((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)/(error[window_mask]))
-    return lad_value
+    lad_value = np.sum(((flux[window_mask] - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])**2)/(error[window_mask]**2))
+    reduced_lad_value = lad_value / (len(flux[window_mask])-len(params))
+    return reduced_lad_value
 
 def interoplate_phase_folded_light_curve(kepler_phase, pg_generated_phase, pg_model_lightcurve):
     interpolated_values = np.zeros_like(kepler_phase)
@@ -784,11 +787,19 @@ def interpolate_lightcurve(time, pg_model_lightcurve, bls_model_flux, total_time
 
     return time_array, full_pg_flux
 
-def print_best_fit_parameters(all_results):
-    columns = ['Period', '\alpha', 'u1', ' u2 ', '$R_p$','chi2']
+def print_best_fit_parameters(all_results,bls_analysis):
+    columns = ['Period', '\alpha', '$R_p$', 'chi2']
     data = []
     period_groups = {}
     chi2_list = {}
+    u1_values = []
+    u2_values = []
+
+    #Get Period Uncertainitys
+    period_uncertainties = {}
+    for result in bls_analysis:
+        period_floor = np.floor(result['candidate_period'])
+        period_uncertainties[period_floor] = result['period_uncertainty']
 
     # Group results by period
     for method_results in all_results:
@@ -801,6 +812,8 @@ def print_best_fit_parameters(all_results):
                 chi2_list[period] = []
             period_groups[period].append(best_fit_params)
             chi2_list[period].append(chi2)
+            u1_values.append(best_fit_params[1])
+            u2_values.append(best_fit_params[2])
 
     # Calculate average and standard deviation for each group
     for period, params_list in period_groups.items():
@@ -810,13 +823,12 @@ def print_best_fit_parameters(all_results):
         chi2_np = np.array(chi2_list[period])
         avg_chi2 = np.mean(chi2_np)
         std_chi2 = np.std(chi2_np)
+        period_floor = np.floor(period)
         data.append([
-            period,
-            f"{avg_params[0]:.3f} ± {std_params[0]:.3f}",
-            f"{avg_params[1]:.3f} ± {std_params[1]:.3f}",
-            f"{avg_params[2]:.3f} ± {std_params[2]:.3f}",
-            f"{avg_params[3]:.3f} ± {std_params[3]:.3f}",
-            f"{avg_chi2:.3f} ± {std_chi2:.3f}",
+            f"{period:.5f} ± {period_uncertainties[period_floor]:.5f}",
+            f"{avg_params[0]:.4f} ± {std_params[0]:.4f}",
+            f"{avg_params[3]:.4f} ± {std_params[3]:.4f}",
+            f"{avg_chi2:.4f} ± {std_chi2:.4f}",
         ])
 
     df = pd.DataFrame(data, columns=columns)
@@ -829,6 +841,15 @@ def print_best_fit_parameters(all_results):
     styled_df = df.style.pipe(make_pretty)
     display(styled_df)
 
+    # Calculate and print total average and standard deviation for u1 and u2
+    u1_np = np.array(u1_values)
+    u2_np = np.array(u2_values)
+    avg_u1 = np.mean(u1_np)
+    std_u1 = np.std(u1_np)
+    avg_u2 = np.mean(u2_np)
+    std_u2 = np.std(u2_np)
+    display(Math(r'Limb darkening Coefficient $u_1$: {:.3f} $\pm$ {:.3f}'.format(avg_u1, std_u1)))
+    display(Math(r'Limb darkening Coefficient $u_2$: {:.3f} $\pm$ {:.3f}'.format(avg_u2, std_u2)))
 
 
 def plot_light_curve(time,flux,flux_error=None):
