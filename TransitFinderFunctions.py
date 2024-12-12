@@ -103,7 +103,7 @@ def analyze_period_with_bls(
 
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
-    durations = np.linspace(duration_range[0], duration_range[1], 200)
+    durations = np.linspace(duration_range[0], duration_range[1], 50)
     results = bls.power(periods, durations)
 
     # Get the results based off max power.
