@@ -103,6 +103,7 @@ def analyze_period_with_bls(
 
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
+    # For this project period percision is significantly more important than duration, hence only 50 are used
     durations = np.linspace(duration_range[0], duration_range[1], 50)
     results = bls.power(periods, durations)
 
@@ -360,8 +361,8 @@ def calculate_fit_for_period(
     total_time,
     star_radius,
     cadence,
-    method="minimize",
-    minimize_options=None,
+    method="L-BFGS-B",
+    L_BFGS_B_options=None,
     nelder_mead_options=None,
     differential_options=None,
 ):
@@ -395,8 +396,8 @@ def calculate_fit_for_period(
     planet_radius = estimate_planet_radius(result["depth"], star_radius)
 
     # Set default options incase a user does not pass them in
-    if minimize_options is None:
-        minimize_options = {
+    if L_BFGS_B_options is None:
+        L_BFGS_B_options = {
             "maxiter": 10,
             "disp": False,
             "ftol": 1e-4,
@@ -443,14 +444,14 @@ def calculate_fit_for_period(
         transit_duration,
     )
 
-    if method == "minimize":
+    if method == "L-BFGS-B":
         result = minimize(
             calculate_reduced_chi_squared,
             initial_guess,
             args=args,
             method="L-BFGS-B",
             bounds=bounds,
-            options=minimize_options,
+            options=L_BFGS_B_options,
         )
         best_fit_params = result.x
 
@@ -538,10 +539,11 @@ def calculate_fit_for_period(
 def calculate_best_fit_parameters(
     kepler_dataframe,
     results_list,
-    minimize_options=None,
+    L_BFGS_B_options=None,
     nelder_mead_options=None,
     differential_options=None,
-    methods=["minimize", "differential_evolution", "Nelder-Mead"],
+    methods=["minimize", "differential_evolution", "L-BFGS-B"],
+    cadence = 0.208333,
 ):
     """
     This function sets up the some multiprocessing to run the optimization functions in parallel.
@@ -549,7 +551,7 @@ def calculate_best_fit_parameters(
     kepler_dataframe: DataFrame -> the kepler dataframe to analyze.
     results_list: list -> a list of dictionaries containing the results of the BLS analysis.
     minimize_options: dict -> the options for the minimize optimization method.
-    nelder_mead_options: dict -> the options for the Nelder-Mead optimization method.
+    nelder_mead_options: dict -> the options for the L-BFGS-B optimization method.
     differential_options: dict -> the options for the differential_evolution optimization method.
     methods: list -> a list of optimization methods to use.
     @returns
@@ -559,19 +561,12 @@ def calculate_best_fit_parameters(
     flux = kepler_dataframe["flux"].values
     error = kepler_dataframe["error"].values
     star_radius = 1
-    cadence = 0.0208333
     total_time = time[-1]
     all_results = []
 
     # Prepare arguments for each method
     pool_args = []
     for method in methods:
-        method_options = {
-            "minimize": minimize_options,
-            "Nelder-Mead": nelder_mead_options,
-            "differential_evolution": differential_options,
-        }
-
         for result in results_list:
             pool_args.append(
                 (
@@ -583,12 +578,8 @@ def calculate_best_fit_parameters(
                     star_radius,
                     cadence,
                     method,
-                    minimize_options if method == "minimize" else None,
-                    (
-                        differential_options
-                        if method == "differential_evolution"
-                        else None
-                    ),
+                    L_BFGS_B_options if method == "L-BFGS-B" else None,
+                    differential_options if method == "differential_evolution"else None,
                     nelder_mead_options if method == "Nelder-Mead" else None,
                 )
             )
@@ -760,7 +751,7 @@ def plot_phase_folded_light_curves(all_results):
     num_candidates = len(all_results[0])
     fig, axs = plt.subplots(4, num_candidates, figsize=(4 * num_candidates, 12))
 
-    methods = ["minimize", "differential_evolution", "Nelder-Mead"]
+    methods = ["minimize", "differential_evolution", "L-BFGS-B"]
     colors = ["orangered", "limegreen", "darkviolet"]
 
     if num_candidates == 1:
