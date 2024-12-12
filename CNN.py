@@ -14,6 +14,7 @@ from scipy.sparse import coo_matrix
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
+import matplotlib.ticker as ticker
 
 # Dataset Definition
 class ExoplanetDataset(Dataset):
@@ -173,43 +174,40 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
         print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
 
-        # Early stopping
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            patience_counter = 0
-            save_model(model, "best_model.pth")
-        else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                print("Early stopping triggered")
-                break
-
-    # Plot loss
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
-    plt.plot(range(0, epochs), losses, label='Average Loss per Epoch')
+    plt.plot(range(0, epochs), losses,color='indigo')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Training Loss per Epoch')
-    plt.legend()
+    plt.title('CNN Training Loss per Epoch')
+    plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().xaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().yaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().tick_params(direction='in')
 
     plt.subplot(1, 2, 2)
-    plt.plot(range(0, len(batch_losses)), batch_losses, label='Loss per Batch')
+    plt.plot(range(0, len(batch_losses)), batch_losses, color ='navy')
     plt.xlabel('Batch')
     plt.ylabel('Loss')
-    plt.title('Training Loss per Batch')
-    plt.legend()
+    plt.title('CNN Training Loss per Batch')
+    plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().xaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().yaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().tick_params(direction='in')
 
     plt.tight_layout()
+    plt.savefig('Images/CnnLoss.png')
     plt.show()
 
 # Main Function
 def main(hdf5_path, data_percentage=1.0):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=10, batch_size=1, data_percentage=data_percentage)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
 
-    save_model(model, "CPU_1_AlignedPeriodAndPlanetOnePercentTheGoodModeltransit_model_5_percent_weight_decay.pth")
+    save_model(model, "Models/CNN_model.pth")
 
 # Save Model
 def save_model(model, path):
@@ -227,5 +225,5 @@ def load_model(path, device):
     return model
 
 if __name__ == "__main__":
-    hdf5_path = "planet_systems.hdf5"
-    main(hdf5_path, data_percentage=1)
+    hdf5_path = "TrainingData/LowNoiseTrainingData.hdf5"
+    main(hdf5_path, data_percentage=0.005)

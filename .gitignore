@@ -14,3 +14,5 @@ theBig*
 *hdf5
 kepler-env/*
 kep*
+TrainingData/*
+Models/*
