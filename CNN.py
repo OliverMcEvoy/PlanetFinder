@@ -145,7 +145,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
         subset_size = int(len(dataset) * data_percentage)
         dataset = Subset(dataset, range(subset_size))
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-5, weight_decay=1e-4)
     model.train()
 
     losses = []
@@ -184,7 +184,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
     plt.gca().xaxis.set_minor_locator(ticker.AutoMinorLocator())
     plt.gca().yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
     plt.gca().yaxis.set_minor_locator(ticker.AutoMinorLocator())
-    plt.gca().tick_params(direction='in')
+    plt.gca().tick_params(axis='both', which='both', direction='in')
 
     plt.subplot(1, 2, 2)
     plt.plot(range(0, len(batch_losses)), batch_losses, color ='navy')
@@ -195,7 +195,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
     plt.gca().xaxis.set_minor_locator(ticker.AutoMinorLocator())
     plt.gca().yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
     plt.gca().yaxis.set_minor_locator(ticker.AutoMinorLocator())
-    plt.gca().tick_params(direction='in')
+    plt.gca().tick_params(axis='both', which='both', direction='in')
 
     plt.tight_layout()
     plt.savefig('Images/CnnLoss.png')
