@@ -138,12 +138,13 @@ def print_comparison_results(ml_results, bls_results):
     @params
     bls_results: list -> a list of dictionaries containing the results of the BLS analysis.
     """
-    period_data = []
-    planet_data = []
+    period_data_synth = []
+    planet_data_synth = []
+    period_data_real = []
+    planet_data_real = []
 
-    # Extract actual periods and uncertainties from BLS results
+    # Extract actual periods from BLS results
     actual_periods_real = [result["candidate_period"] for result in bls_results]
-    period_uncertainties_real = [result["period_uncertainty"] for result in bls_results]
 
     for model_type in ['RNN_Synth', 'CNN_Synth', 'RNN_Real', 'CNN_Real']:
         if model_type not in ml_results:
@@ -158,32 +159,43 @@ def print_comparison_results(ml_results, bls_results):
 
         if model_type in ['RNN_Real', 'CNN_Real']:
             true_periods = actual_periods_real
-            period_uncertainties = period_uncertainties_real
             true_num_planets = 4  # Hardcoded actual number of planets for real data
-        else:
-            period_uncertainties = [None] * len(true_periods)
 
-        for i, true_period in enumerate(true_periods):
+        for i in range(max(len(true_periods), len(predicted_periods[0]))):
+            true_period = true_periods[i] if i < len(true_periods) else np.nan
             predicted_period = predicted_periods[0][i] if i < len(predicted_periods[0]) else None
-            uncertainty = period_uncertainties[i] if i < len(period_uncertainties) else None
-            period_data.append([model_type, true_period, predicted_period, uncertainty])
+            if 'Synth' in model_type:
+                period_data_synth.append([model_type, true_period, predicted_period])
+            else:
+                period_data_real.append([model_type, true_period, predicted_period])
 
-        planet_data.append([model_type, true_num_planets, predicted_num_planets])
+        if 'Synth' in model_type:
+            planet_data_synth.append([model_type, true_num_planets, predicted_num_planets])
+        else:
+            planet_data_real.append([model_type, true_num_planets, predicted_num_planets])
 
-    period_df = pd.DataFrame(period_data, columns=["Model", "Actual Period", "Predicted Period", "Uncertainty"])
-    planet_df = pd.DataFrame(planet_data, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
+    period_df_synth = pd.DataFrame(period_data_synth, columns=["Model", "Actual Period", "Predicted Period"])
+    planet_df_synth = pd.DataFrame(planet_data_synth, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
+    period_df_real = pd.DataFrame(period_data_real, columns=["Model", "Actual Period", "Predicted Period"])
+    planet_df_real = pd.DataFrame(planet_data_real, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
 
     def make_pretty(styler):
         styler.format(precision=3, thousands=",", decimal=".")
         return styler
 
-    styled_period_df = period_df.style.pipe(make_pretty)
-    styled_planet_df = planet_df.style.pipe(make_pretty)
+    styled_period_df_synth = period_df_synth.style.pipe(make_pretty)
+    styled_planet_df_synth = planet_df_synth.style.pipe(make_pretty)
+    styled_period_df_real = period_df_real.style.pipe(make_pretty)
+    styled_planet_df_real = planet_df_real.style.pipe(make_pretty)
 
-    display(styled_period_df)
-    print("Table 2. Comparison of Actual and Predicted Periods")
-    display(styled_planet_df)
-    print("Table 3. Comparison of Actual and Predicted Number of Planets")
+    display(styled_period_df_synth)
+    print("Table 2. Comparison of Actual and Predicted Periods for Synthetic Data")
+    display(styled_planet_df_synth)
+    print("Table 3. Comparison of Actual and Predicted Number of Planets for Synthetic Data")
+    display(styled_period_df_real)
+    print("Table 4. Comparison of Actual and Predicted Periods for Real Data")
+    display(styled_planet_df_real)
+    print("Table 5. Comparison of Actual and Predicted Number of Planets for Real Data")
 
 
 
