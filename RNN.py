@@ -250,7 +250,7 @@ def main(hdf5_path, data_percentage=1.0, period_max=50):
     if device == 'cuda':
         torch.cuda.empty_cache()
     model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=2, batch_size=1, data_percentage=data_percentage, period_max=period_max)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage, period_max=period_max)
 
     save_model(model, "Models/RnnModel.pth")
 
@@ -270,5 +270,5 @@ def load_model(path, device):
     return model
 
 if __name__ == "__main__":
-    hdf5_path = "TrainingData/LowNoiseTrainingData.hdf5"
-    main(hdf5_path, data_percentage=0.0001, period_max=50)
+    hdf5_path = "TrainingData/LightCurveTrainingData.hdf5"
+    main(hdf5_path, data_percentage=0.0005, period_max=50)

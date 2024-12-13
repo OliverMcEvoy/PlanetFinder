@@ -747,7 +747,7 @@ def plot_phase_folded_light_curves(all_results):
     fig, axs = plt.subplots(4, num_candidates, figsize=(4 * num_candidates, 12))
 
     methods = ["L-BFGS-B", "differential-evolution", "Nelder-Mead"]
-    colors = ["orangered", "limegreen", "darkviolet"]
+    colors = ["orangered", "olivedrab", "darkviolet"]
 
     if num_candidates == 1:
         axs = np.array([axs]).T
@@ -834,7 +834,7 @@ def plot_phase_folded_light_curves(all_results):
                 linestyle="none",
                 markersize=5,
             )
-            axs[i + 1][j].set_ylabel(f"Normalised Flux, {methods[i]}  ")
+            axs[i + 1][j].set_ylabel(f"Flux, {methods[i]}  ")
 
             axs[i + 1][j].errorbar(
                 pg_generated_phase[pg_mask],
@@ -870,12 +870,12 @@ def plot_phase_folded_light_curves(all_results):
     fig.text(
         0.5,
         0.01,
-        "Fig.1. The fitted parameters for each of the detected periods and for each of the minimisation methods.\nThe phase folded data is plotted in the background, and in the forground the best fit is plotted.\n Due to how the BLS method works the fit for it is flat \nIt can be seen some fit better than others e.g for the planet with a period of approx 32 days the differential evolution method appears to be the best fit.\n However it is apparent from the graph that all method of lightcurve generation to minimise $\chi_R^2$ seems to fit ok.",
+        "Fig.1. The fitted parameters for each of the detected periods and for each of the minimisation methods.\nThe phase folded data is plotted in the background, and in the forground the best fit is plotted.\n Due to how the BLS method works the fit for it is flat \nIt can be seen some fit better than others e.g for the planet with a period of approx 32 days the differential evolution method appears to be the best fit.\n However it is apparent from the graph that all method of lightcurve generation to minimise $\chi_R^2$ seems to fit ok.\n All the flux is noramlised for the base flux to be approx 1.",
         ha="center",
         fontsize=12,
     )
 
-    plt.subplots_adjust(bottom=0.13)  # Adjust the bottom margin to add a gap
+    plt.subplots_adjust(bottom=0.15)  # Adjust the bottom margin to add a gap
     plt.show()
 
 

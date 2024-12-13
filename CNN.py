@@ -225,5 +225,5 @@ def load_model(path, device):
     return model
 
 if __name__ == "__main__":
-    hdf5_path = "TrainingData/LowNoiseTrainingData.hdf5"
+    hdf5_path = "TrainingData/LightCurveTrainingData.hdf5"
     main(hdf5_path, data_percentage=0.005)
