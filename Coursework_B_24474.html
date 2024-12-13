@@ -7731,7 +7731,7 @@ Limb darkening Coefficient u2: 0.366 ± 0.159
 <h2 align="center"> 3. Analysis of the Results and Discussion</h2>
 
 <h3 align="center"> 3.1. Analysis of the Results </h3>
-<p>The results form the model fitting can be found in table.1, one result in particular is the coefficients found for the limb darkening coefficients. The value of $u_1$ of 0.85 seems to lie wihtin the uncertainites matching the typical value used by Hestroffer, D. and Magnan, C. (1998), and $u_2$ is found to be X which is expected for light of wavelenght X.</p>
+<p>The results form the model fitting can be found in table.1, one result in particular is the coefficients found for the limb darkening coefficients. The value of $u_1$ of 0.876 ± 0.061 seems to lie wihtin the uncertainites matching the typical value used by Hestroffer, D. and Magnan, C. (1998), and $u_2$ is found to be 0.366 ± 0.159.</p>
 <p>The reduced $\chi_R^2$ sorces with most $\approx$ 2 seem to indicate a good fit considering the length of the input. It is also clear that the differntial evolution method is the best method of minimising $\chi_R^2$ for fitting the synthetic light curve to the data set.</p>
 
 <h3 align="center"> 3.2. Generating Synthetic Dataset </h3>
@@ -7850,7 +7850,7 @@ The parameters of the model have been tuned to allow computational efficency, ho
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
 <p>$$
 \begin{array}{cc}
-\text{\Large \textbf{CNN Model}} &amp; \text{\Large \textbf{RNN Model}} \\
+\text{\textbf{CNN Model}} &amp; \text{\textbf{RNN Model}} \\
 \\
 \\
 \begin{array}{c}
@@ -8252,9 +8252,9 @@ $$</p>
 <h3 align="center"> 3.4. Future Improvements and Observations </h3>
 <h4 id="3.4.1-Fine-tune-on-the-Kepler-Dataset">3.4.1 Fine-tune on the Kepler Dataset<a class="anchor-link" href="#3.4.1-Fine-tune-on-the-Kepler-Dataset">¶</a></h4><p>Fine tuning the model by using the Kepler dataset and known planet transits could help the model deal with phenomons unique to real data that cannot be accurately represented by synthetic data. However, considerations will need to be made. for example, the Kepler dataset lightcurves will have to be truncated or extended. Its hypothesised a variable input or padding could be used but the best data however this is not proven for planet tranasit yet. But this is an area that could be quite benefitial to be explored further.</p>
 <p>But for the premise of detecting the unkown system better, observations of similar systems would provide most benefitial for fine tuned training data.</p>
-<p>Less noisy data would also be desired, as this would allow for a larger amount of theoretically detectable planets, this would also aid in traditional methods of finding planets.</p>
+<p>Less noisy data would also be desired it is hoped this will aid the model to find the exoplanets of a lower period, something is is currently struglling with. Also this would also aid in traditional methods of finding exoplanets which could lead us to find more exoplanets in the system that are currently difficult to find due to the noise in the .</p>
 <h4 id="3.4.2-High-Powered-Computing-Time">3.4.2 High Powered Computing Time<a class="anchor-link" href="#3.4.2-High-Powered-Computing-Time">¶</a></h4><p>The inital planned architecture of the model has been heavily scaled back due to memeory limitations, in particular the CNN model.
-This model has been trained on a NVIDA RTX 2070s 8GB, a larger GPU or even a GPU cluster would allow for more epochs, larger batches, more training data and oppertunties for a more complex architecture. While it is debateable if a more advanced model will always be better, it is my belief that due to the scale of the input, larger layers would signidicant increase the acccuracy of this model. For the demonstation of the syntehtic lightcurve generator 400,000 light curves where generated, however less than 5% of this has been used to train the models present in the report.</p>
+This model has been trained on a NVIDA RTX 2070s 8GB, a larger GPU or even a GPU cluster would allow for more epochs, larger batches, more training data and oppertunties for a more complex architecture. While it is debateable if a more advanced model will always be better, it is my belief that due to the scale of the input, larger layers would signidicant increase the acccuracy of this model. For the demonstation of the syntehtic lightcurve generator 400,000 light curves have been generated, however less than 5% of this has been used to train the models present in the report.</p>
 </div>
 </div>
 </div>
@@ -8307,7 +8307,7 @@ This model has been trained on a NVIDA RTX 2070s 8GB, a larger GPU or even a GPU
 <div class="jp-RenderedText jp-OutputArea-output" data-mime-type="text/plain" tabindex="0">
 <pre>[NbConvertApp] Converting notebook Coursework_B_24474.ipynb to html
 [NbConvertApp] WARNING | Alternative text is missing on 4 image(s).
-[NbConvertApp] Writing 1249901 bytes to Coursework_B_24474.html
+[NbConvertApp] Writing 1224543 bytes to Coursework_B_24474.html
 </pre>
 </div>
 </div>
