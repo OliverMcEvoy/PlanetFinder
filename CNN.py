@@ -18,6 +18,11 @@ import matplotlib.ticker as ticker
 
 # Dataset Definition
 class ExoplanetDataset(Dataset):
+    '''
+    Dataset class for the exoplanet data stored in an HDF5 file.
+    The dataset contains light curves with simulated exoplanet transits.
+    Each item in the dataset is a tuple containing the flux values and the periods of the transits.
+    '''
     def __init__(self, hdf5_path):
         self.hdf5_path = hdf5_path
         with h5py.File(hdf5_path, 'r') as f:
@@ -226,4 +231,4 @@ def load_model(path, device):
 
 if __name__ == "__main__":
     hdf5_path = "TrainingData/LightCurveTrainingData.hdf5"
-    main(hdf5_path, data_percentage=0.005)
+    main(hdf5_path, data_percentage=0.04)

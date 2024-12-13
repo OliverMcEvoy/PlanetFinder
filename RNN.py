@@ -16,6 +16,11 @@ from scipy.sparse import coo_matrix
 import torch.nn.functional as F
 
 class ExoplanetDataset(Dataset):
+    '''
+    Dataset class for the exoplanet data stored in an HDF5 file.
+    The dataset contains light curves with simulated exoplanet transits.
+    Each item in the dataset is a tuple containing the flux values and the periods of the transits.
+    '''
     def __init__(self, hdf5_path, max_planets=5):
         self.hdf5_path = hdf5_path
         self.period_max = 50

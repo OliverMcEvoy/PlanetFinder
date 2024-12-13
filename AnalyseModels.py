@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from SyntheticLightCurveGeneration import generate_random_planet_systems, process_system
 from RNN import load_model as load_model_RNN
 from CNN import load_model as local_model_CNN
@@ -9,12 +10,30 @@ import pandas as pd
 
 # For future prooding keeping the load model functions seperate
 def get_model_RNN(model_name, model_path, device):
+    '''
+    Load the RNN model
+    @params
+    model_name: str -> the name of the model to load
+    model_path: str -> the path to the model file
+    device: str -> the device to run the model on
+    @returns
+    model: torch.nn.Module -> the loaded model
+    '''
     if model_name == "RNN":
         return load_model_RNN(model_path, device)
     else:
         raise ValueError(f"Invalid RNN model: {model_name}")
     
 def get_model_CNN(model_name, model_path, device):
+    '''
+    Load the CNN model
+    @params
+    model_name: str -> the name of the model to load
+    model_path: str -> the path to the model file
+    device: str -> the device to run the model on
+    @returns
+    model: torch.nn.Module -> the loaded model
+    '''
     if model_name == "CNN":
         return local_model_CNN(model_path, device)
     else:
@@ -22,6 +41,15 @@ def get_model_CNN(model_name, model_path, device):
 
 
 def predict_model_output(flux_tensor, model):
+    '''
+    Predict the output of the model
+    @params
+    flux_tensor: torch.Tensor -> the input tensor to the model
+    model: torch.nn.Module -> the model to predict with
+    @returns
+    predicted_periods: list -> the predicted periods
+    predicted_num_planets: int -> the predicted number of planets
+    '''
     with torch.no_grad():
         predicted_periods, predicted_num_planets = model(flux_tensor)
         predicted_periods = [p.cpu().numpy() for p in predicted_periods]
@@ -31,6 +59,16 @@ def predict_model_output(flux_tensor, model):
 def generate_light_curves(
     num_systems=10, max_planets_per_system=6, total_time=365, cadence=0.0208333
 ):
+    '''
+    Generate synthetic light curves
+    @params
+    num_systems: int -> the number of systems to generate
+    max_planets_per_system: int -> the maximum number of planets per system
+    total_time: int -> the total time to generate light curves for
+    cadence: float -> the cadence of the light curves
+    @returns
+    light_curve: dict -> the generated light curve
+    '''
     system = generate_random_planet_systems(
         num_systems, max_planets_per_system, total_time, False
     )
@@ -62,6 +100,15 @@ def generate_light_curves(
 
 
 def analyze_light_curves(light_curve, model, device):
+    '''
+    Analyze the light curves
+    @params
+    light_curve: dict -> the light curve to analyze
+    model: torch.nn.Module -> the model to use for analysis
+    device: str -> the device to run the model on
+    @returns
+    results: dict -> the results of the analysis
+    '''
     model.eval()
     flux_tensor = (
         torch.tensor(light_curve["flux_with_noise"], dtype=torch.float32)
@@ -91,10 +138,16 @@ def plot_light_curves(results):
     ax.set_ylabel("Flux")
     ax.set_title("Synthetic Lightcurve")
 
-    txt = " Fig.2 - Synthetic Lightcurve. \n This is a synthetic lightcurve generated using the attached script. \n Rerun the code for a new lightcurve."
+
+    txt = " Fig.3 - Synthetic Lightcurve. \n This is a synthetic lightcurve generated using the attached script. \n Rerun the code for a new lightcurve."
 
     fig.text(0.5, 0.01, txt, wrap=True, horizontalalignment="center", fontsize=10)
 
+    plt.gca().xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().xaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().yaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
+    plt.gca().yaxis.set_minor_locator(ticker.AutoMinorLocator())
+    plt.gca().tick_params(axis='both', which='both', direction='in')
     plt.subplots_adjust(bottom=0.17)  # Adjust the bottom margin to add a gap
     plt.show()
 
@@ -114,15 +167,6 @@ def analyze_and_plot_kepler(kepler_dataframe, model, device):
     )
 
     predicted_periods, predicted_num_planets = predict_model_output(flux_tensor, model)
-
-    # fig, ax = plt.subplots(figsize=(8, 6))
-    # ax.plot(time_array, flux_array, label='Light Curve')
-    # ax.set_title(f"Sythetic light curve")
-    # ax.set_xlabel('Time')
-    # ax.set_ylabel('Flux')
-    # ax.legend()
-    # plt.tight_layout()
-    # plt.show()
 
     results = {
         "predicted_num_planets": predicted_num_planets,
@@ -174,10 +218,10 @@ def print_comparison_results(ml_results, bls_results):
         else:
             planet_data_real.append([model_type, true_num_planets, predicted_num_planets])
 
-    period_df_synth = pd.DataFrame(period_data_synth, columns=["Model", "Actual Period", "Predicted Period"])
+    period_df_synth = pd.DataFrame(period_data_synth, columns=["Model", "Actual Period (Days)", "Predicted Period (Days)"])
     planet_df_synth = pd.DataFrame(planet_data_synth, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
-    period_df_real = pd.DataFrame(period_data_real, columns=["Model", "Actual Period", "Predicted Period"])
-    planet_df_real = pd.DataFrame(planet_data_real, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
+    period_df_real = pd.DataFrame(period_data_real, columns=["Model", "Actual Period ", "Predicted Period"])
+    planet_df_real = pd.DataFrame(planet_data_real, columns=["Model", "Actual Number of Planets (Days)", "Predicted Number of Planets (Days)"])
 
     def make_pretty(styler):
         styler.format(precision=3, thousands=",", decimal=".")
@@ -190,10 +234,13 @@ def print_comparison_results(ml_results, bls_results):
 
     display(styled_period_df_synth)
     print("Table 2. Comparison of Actual and Predicted Periods for Synthetic Data")
+    print()
     display(styled_planet_df_synth)
     print("Table 3. Comparison of Actual and Predicted Number of Planets for Synthetic Data")
+    print()
     display(styled_period_df_real)
     print("Table 4. Comparison of Actual and Predicted Periods for Real Data")
+    print()
     display(styled_planet_df_real)
     print("Table 5. Comparison of Actual and Predicted Number of Planets for Real Data")
 
@@ -206,6 +253,18 @@ def main(
     generate_light_curve=True,
     max_planets_in_system=5,
 ):
+    '''
+    The main function to run the analysis
+    @params
+    model_path: str -> the path to the model file.
+    model_name: str -> the name of the model to load.
+    comparison_model_path: str -> the path to the comparison model file.
+    generate_light_curve: bool -> whether to generate a light curve or use Kepler data.
+    max_planets_in_system: int -> the maximum number of planets in a system.
+    @returns
+    results: dict -> the results of the analysis.
+    results_comparison: dict -> the results of the comparison analysis. (sometimes)
+    '''
     device = "cpu"
     if model_name == "RNN":
         model = get_model_RNN(model_name, model_path, device)
@@ -234,12 +293,12 @@ def main(
         results = analyze_and_plot_kepler(kepler_dataframe, model, device)
         results["is_kepler"] = True
 
-    if comparison_model_path is None:
+    if model_name != "both":
         return results
 
     # Get comparison model and alayse
     if generate_light_curve:
-        results_comparison = analyze_light_curves(light_curve, model, device)
+        results_comparison = analyze_light_curves(light_curve, comparison_model, device)
         results_comparison["is_kepler"] = False
     else:
         fits_file_path = "CourseworkData/Objectlc"
@@ -247,7 +306,7 @@ def main(
             fits_file_path, filter_type="medfilt"
         )
 
-        results_comparison = analyze_and_plot_kepler(kepler_dataframe, model, device)
+        results_comparison = analyze_and_plot_kepler(kepler_dataframe, comparison_model, device)
         results_comparison["is_kepler"] = True
 
     return results, results_comparison

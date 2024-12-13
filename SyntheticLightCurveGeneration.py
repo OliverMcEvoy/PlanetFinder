@@ -10,6 +10,17 @@ import matplotlib.pyplot as plt
 
 
 def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, time_array):
+    '''
+    Calculate the x and y values of the orbit.
+    @params:
+    period: float, the period of the planet.
+    transit_midpoint: float, the transit midpoint of the planet.
+    semi_major_axis: float, the semi-major axis of the planet.
+    time_array: numpy.ndarray, the time array.
+    @returns:
+    x_value_of_orbit: numpy.ndarray, the x value of the orbit.
+    y_value_of_orbit: numpy.ndarray, the y value of the orbit.
+    '''
     orbit = np.pi * 2 * (time_array + transit_midpoint) / (period)  #
     x_value_of_orbit = semi_major_axis * np.cos(orbit)
     y_value_of_orbit = semi_major_axis * np.sin(orbit)
@@ -25,6 +36,19 @@ def calculate_limb_darkened_light_curve(
     limb_darkening_u2,
     star_radius,
 ):
+    '''
+    Calculate the limb darkened light curve.
+    @params:
+    light_curve: numpy.ndarray, the light curve.
+    x_value_of_orbit: numpy.ndarray, the x value of the orbit.
+    y_value_of_orbit: numpy.ndarray, the y value of the orbit.
+    planet_radius: float, the radius of the planet.
+    limb_darkening_u1: float, the first limb darkening coefficient.
+    limb_darkening_u2: float, the second limb darkening coefficient.
+    star_radius: float, the radius of the star.
+    @returns:
+    light_curve: numpy.ndarray, the limb darkened light curve.
+    '''
     star_radius_in_au = star_radius * (1 / 215)  # convert Stellar radius to AU
     planet_radius_in_au = planet_radius * (1 / 215)  # convert planet radius to AU
 
@@ -100,6 +124,23 @@ def generate_multi_planet_light_curve(
     cadence=0.0208333,
     simulate_gap_in_data=True,
 ):
+    '''
+    Generate a light curve for a multi-planetary system.
+    @params:
+    planets: list, a list of dictionaries containing the parameters of the planets.
+    total_time: float, the total observation time in days.
+    star_radius: float, the radius of the star.
+    observation_noise: float, the observation noise.
+    snr_threshold: float, the signal-to-noise ratio threshold for detection.
+    u1: float, the first limb darkening coefficient.
+    u2: float, the second limb darkening coefficient.
+    cadence: float, the time interval between data points in days.
+    simulate_gap_in_data: bool, whether to simulate gaps in the data.
+    @returns:
+    time_array: numpy.ndarray, the time array.
+    flux_with_noise: numpy.ndarray, the light curve with noise.
+    combined_light_curve: numpy.ndarray, the light curve no noise.
+    '''
     time_array = np.arange(0, total_time, cadence)
     light_curve = np.ones_like(time_array)
     star_radius_squared = star_radius**2
@@ -152,6 +193,16 @@ def limb_darken_values():
 def generate_random_planet_systems(
     num_systems, max_planets_per_system, total_time, force_max_planets=False
 ):
+    '''
+    Generate random planetary systems.
+    @params:
+    num_systems: int, the number of planetary systems to generate.
+    max_planets_per_system: int, the maximum number of planets per system.
+    total_time: float, the total observation time in days.
+    force_max_planets: bool, whether to force the maximum number of planets per system.
+    @returns:
+    systems: list, a list of dictionaries containing the parameters of the planetary systems.
+    '''
     systems = []
     observation_noise = np.random.uniform(0.00015, 0.00025)
     for _ in range(num_systems):
@@ -207,6 +258,26 @@ def generate_random_planet_systems(
 
 
 def process_system(system, snr_threshold, total_time, cadence):
+    '''
+    Generate a light curve for a given planetary system and return the number of detectable planets.
+    @params:
+    system: dict, a dictionary containing the parameters of the planetary system.
+    snr_threshold: float, the signal-to-noise ratio threshold for detection.
+    total_time: float, the total observation time in days.
+    cadence: float, the time interval between data points in days.
+    @returns:
+    time_array: numpy.ndarray, the time array.
+    flux_with_noise: numpy.ndarray, the light curve with noise.
+    combined_light_curve: numpy.ndarray, the light curve no noise.
+    total_time: float, the total observation time in days.
+    star_radius: float, the radius of the star.
+    observation_noise: float, the observation noise.
+    u1: float, the first limb darkening coefficient.
+    u2: float, the second limb darkening coefficient.
+    planets: list, a list of dictionaries containing the parameters of the planets.
+    num_detectable_planets: int, the number of detectable planets.
+    total_planets: int, the total number of planets.
+    '''
     time_array, flux_with_noise, combined_light_curve = (
         generate_multi_planet_light_curve(
             system["planets"],

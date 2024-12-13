@@ -105,6 +105,7 @@ def analyze_period_with_bls(
 
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
+    period_spacing = periods[1] - periods[0]
     durations = np.linspace(duration_range[0], duration_range[1], 50)
     results = bls.power(periods, durations)
 
@@ -142,7 +143,7 @@ def analyze_period_with_bls(
             bootstrap_results.transit_time[bootstrap_max_power_idx]
         )
 
-    period_uncertainty = np.std(bootstrap_periods)
+    period_uncertainty = np.std(bootstrap_periods) + period_spacing
     duration_uncertainty = np.std(bootstrap_durations)
     transit_time_uncertainty = np.std(bootstrap_transit_times)
 
@@ -886,7 +887,7 @@ def print_best_fit_parameters(all_results, bls_analysis):
     all_results: list -> a list of dictionaries containing the results of the fitting analysis.
     bls_analysis: list -> a list of dictionaries containing the results of the BLS analysis.
     """
-    columns = ["Period", "Semi-major Axis", "Radius of the planet in solar masses", "reduced chi squared", "Best Method"]
+    columns = ["Period (Days)", "Semi-major Axis (au)", "Radius of the Exoplanet (Solar Radii)", "Reduced Chi Squared", "Best Method"]
     data = []
     period_groups = {}
     chi2_list = {}
@@ -945,7 +946,8 @@ def print_best_fit_parameters(all_results, bls_analysis):
 
     styled_df = df.style.pipe(make_pretty)
     display(styled_df)
-    print("Table 1. The best fit parameters for each of the detected periods and the best Chi squared value and its associated method")
+    print('Table 1. The best fit parameters for each of the detected periods and the best reduced chi squared value and its associated method.')
+    print('It is clear from this table that the differential evolution method is the best method for the majority of the periods detected.')
 
     # Calculate and print total average and standard deviation for u1 and u2
     u1_np = np.array(u1_values)

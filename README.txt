@@ -1,6 +1,8 @@
-The models can be found at 
+The models can be found at:
 
+https://computingservices-my.sharepoint.com/:f:/g/personal/om518_bath_ac_uk/EvxLoph4OA1Dl2GH3u4E39kB0rOhQASqWnFvQq1EivEAjA?e=fR2ElF
 
+Anyone with a uni of bath email should be able to access this and download it, any issues email me and let me know.
 
 They should be saved as
 'Models/CnnModel.py'
