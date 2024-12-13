@@ -2,15 +2,23 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from SyntheticLightCurveGeneration import generate_random_planet_systems, process_system
-from RNN import TransitModel, load_model as load_model_RNN
+from RNN import load_model as load_model_RNN
+from CNN import load_model as local_model_CNN
 import TransitFinderFunctions as tff
+import pandas as pd
 
-
-def get_model(model_name, model_path, device):
+# For future prooding keeping the load model functions seperate
+def get_model_RNN(model_name, model_path, device):
     if model_name == "RNN":
         return load_model_RNN(model_path, device)
     else:
-        raise ValueError(f"Invalid model: {model_name}")
+        raise ValueError(f"Invalid RNN model: {model_name}")
+    
+def get_model_CNN(model_name, model_path, device):
+    if model_name == "CNN":
+        return local_model_CNN(model_path, device)
+    else:
+        raise ValueError(f"Invalid CNN model: {model_name}")
 
 
 def predict_model_output(flux_tensor, model):
@@ -63,10 +71,6 @@ def analyze_light_curves(light_curve, model, device):
     predicted_periods, predicted_num_planets = predict_model_output(flux_tensor, model)
 
     true_periods = [planet["period"] for planet in light_curve["planets"]]
-    print(f"Actual periods: {true_periods}")
-    print(f"Predicted periods: {predicted_periods}")
-    print(f"Actual number of planets: {light_curve['true_num_planets']}")
-    print(f"Predicted number of planets: {predicted_num_planets}")
 
     results = {
         "true_periods": true_periods,
@@ -80,19 +84,18 @@ def analyze_light_curves(light_curve, model, device):
 
 
 def plot_light_curves(results):
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(results["time_array"], results["flux_with_noise"], color="grey")
+    ax.plot(results["time_array"], results["flux_with_noise"], color="dodgerblue")
     ax.set_xlabel("Time (days)")
     ax.set_ylabel("Flux")
     ax.set_title("Synthetic Lightcurve")
 
-    # actual_text = f"Actual periods: {', '.join(map(lambda p: f'{p:.2f}', results['true_periods']))}"
-    # predicted_text = f"Predicted periods: {', '.join(map(lambda p: f'{p:.2f}', np.concatenate(results['predicted_periods'])))}"
-    # ax.text(0.02, 0.98, actual_text, transform=ax.transAxes, fontsize=16, verticalalignment='top')
-    # ax.text(0.02, 0.92, predicted_text, transform=ax.transAxes, fontsize=16, verticalalignment='top')
+    txt = " Fig.2 - Synthetic Lightcurve. \n This is a synthetic lightcurve generated using the attached script. \n Rerun the code for a new lightcurve."
 
-    plt.tight_layout()
+    fig.text(0.5, 0.01, txt, wrap=True, horizontalalignment="center", fontsize=10)
+
+    plt.subplots_adjust(bottom=0.17)  # Adjust the bottom margin to add a gap
     plt.show()
 
 
@@ -127,21 +130,83 @@ def analyze_and_plot_kepler(kepler_dataframe, model, device):
     }
     return results
 
+def print_comparison_results(ml_results, bls_results):
+    """
+    Display a comparison of actual and predicted periods and number of planets for RNN and CNN models.
+    @params
+    ml_results: dict -> a dictionary containing the results of the model predictions.
+    @params
+    bls_results: list -> a list of dictionaries containing the results of the BLS analysis.
+    """
+    period_data = []
+    planet_data = []
+
+    # Extract actual periods and uncertainties from BLS results
+    actual_periods_real = [result["candidate_period"] for result in bls_results]
+    period_uncertainties_real = [result["period_uncertainty"] for result in bls_results]
+
+    for model_type in ['RNN_Synth', 'CNN_Synth', 'RNN_Real', 'CNN_Real']:
+        if model_type not in ml_results:
+            print(f"Warning: {model_type} not found in ml_results")
+            continue
+
+        model_results = ml_results[model_type]
+        true_periods = model_results.get('true_periods', [])
+        predicted_periods = model_results.get('predicted_periods', [[]])
+        true_num_planets = model_results.get('true_num_planets', None)
+        predicted_num_planets = model_results.get('predicted_num_planets', None)
+
+        if model_type in ['RNN_Real', 'CNN_Real']:
+            true_periods = actual_periods_real
+            period_uncertainties = period_uncertainties_real
+            true_num_planets = 4  # Hardcoded actual number of planets for real data
+        else:
+            period_uncertainties = [None] * len(true_periods)
+
+        for i, true_period in enumerate(true_periods):
+            predicted_period = predicted_periods[0][i] if i < len(predicted_periods[0]) else None
+            uncertainty = period_uncertainties[i] if i < len(period_uncertainties) else None
+            period_data.append([model_type, true_period, predicted_period, uncertainty])
+
+        planet_data.append([model_type, true_num_planets, predicted_num_planets])
+
+    period_df = pd.DataFrame(period_data, columns=["Model", "Actual Period", "Predicted Period", "Uncertainty"])
+    planet_df = pd.DataFrame(planet_data, columns=["Model", "Actual Number of Planets", "Predicted Number of Planets"])
+
+    def make_pretty(styler):
+        styler.format(precision=3, thousands=",", decimal=".")
+        return styler
+
+    styled_period_df = period_df.style.pipe(make_pretty)
+    styled_planet_df = planet_df.style.pipe(make_pretty)
+
+    display(styled_period_df)
+    print("Table 2. Comparison of Actual and Predicted Periods")
+    display(styled_planet_df)
+    print("Table 3. Comparison of Actual and Predicted Number of Planets")
+
+
 
 def main(
     model_path="0best_model_stuf.pth",
     model_name="RNN",
-    comparison_model=None,
+    comparison_model_path=None,
     generate_light_curve=True,
-    max_planets_per_system=5,
+    max_planets_in_system=5,
 ):
     device = "cpu"
-    model = get_model(model_name, model_path, device)
+    if model_name == "RNN":
+        model = get_model_RNN(model_name, model_path, device)
+    elif model_name == "CNN":
+        model = get_model_CNN(model_name, model_path, device)
+    elif model_name == "both":
+        model = get_model_RNN("RNN", model_path, device)
+        comparison_model = get_model_CNN("CNN", comparison_model_path, device)
 
     if generate_light_curve:
         light_curve = generate_light_curves(
             num_systems=1,
-            max_planets_per_system=max_planets_per_system,
+            max_planets_per_system=max_planets_in_system,
             total_time=1600,
         )
         results = analyze_light_curves(light_curve, model, device)
@@ -157,18 +222,11 @@ def main(
         results = analyze_and_plot_kepler(kepler_dataframe, model, device)
         results["is_kepler"] = True
 
-    if comparison_model is None:
+    if comparison_model_path is None:
         return results
-    else:
-        comparison_model = get_model(comparison_model, model_path, device)
 
     # Get comparison model and alayse
     if generate_light_curve:
-        light_curve = generate_light_curves(
-            num_systems=1,
-            max_planets_per_system=max_planets_per_system,
-            total_time=1600,
-        )
         results_comparison = analyze_light_curves(light_curve, model, device)
         results_comparison["is_kepler"] = False
     else:

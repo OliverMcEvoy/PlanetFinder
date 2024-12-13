@@ -252,7 +252,7 @@ def main(hdf5_path, data_percentage=1.0, period_max=50):
     model = TransitModel().to(device)
     train_model(model, hdf5_path=hdf5_path, device=device, epochs=2, batch_size=1, data_percentage=data_percentage, period_max=period_max)
 
-    save_model(model, "Models/RNN_Model.pth")
+    save_model(model, "Models/RnnModel.pth")
 
 # Save Model
 def save_model(model, path):

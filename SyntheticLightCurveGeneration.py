@@ -153,7 +153,7 @@ def generate_random_planet_systems(
     num_systems, max_planets_per_system, total_time, force_max_planets=False
 ):
     systems = []
-    observation_noise = np.random.uniform(0.000015, 0.000025)
+    observation_noise = np.random.uniform(0.00015, 0.00025)
     for _ in range(num_systems):
 
         if force_max_planets:

@@ -207,7 +207,7 @@ def main(hdf5_path, data_percentage=1.0):
     model = TransitModel().to(device)
     train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage)
 
-    save_model(model, "Models/CNN_model.pth")
+    save_model(model, "Models/CnnModel.pth")
 
 # Save Model
 def save_model(model, path):

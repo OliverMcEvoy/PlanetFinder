@@ -82,6 +82,7 @@ def analyze_period_with_bls(
     duration_range,
     allowed_deviation,
     n_bootstrap,
+    bootstrap_resolution,
 ):
     """
     Analyze a single period candidate using the BLS algorithm and bootstrap resampling.
@@ -90,24 +91,24 @@ def analyze_period_with_bls(
     flux: array -> array containing the corresponding flux values for each time.
     error: array -> array containing the error values for each flux value.
     period: float -> the period to analyze.
-    resolution: int -> the resolution of the BLS algorithm.
+    resolution: int -> the resolution of the BLS algorithm for the initial analysis.
     duration_range: tuple -> the range of durations to search for transits.
     allowed_deviation: float -> the allowed deviation from the period.
     n_bootstrap: int -> the number of bootstrap resamples to perform.
+    bootstrap_resolution: int -> the resolution of the BLS algorithm for the bootstrap resampling.
     @returns
     dict -> a dictionary containing the results of the BLS analysis.
     """
-    # Define the minimum and maximum periods to analyse.
+    # Define the minimum and maximum periods to analyze.
     min_period = period * (1 - allowed_deviation)
     max_period = period * (1 + allowed_deviation)
 
     bls = BoxLeastSquares(time, flux, dy=error)
     periods = np.linspace(min_period, max_period, resolution)
-    # For this project period percision is significantly more important than duration, hence only 50 are used
     durations = np.linspace(duration_range[0], duration_range[1], 50)
     results = bls.power(periods, durations)
 
-    # Get the results based off max power.
+    # Get the results based on max power.
     max_power_idx = np.argmax(results.power)
     best_period = results.period[max_power_idx]
     best_duration = results.duration[max_power_idx]
@@ -116,12 +117,12 @@ def analyze_period_with_bls(
     best_transit_model = bls.model(time, best_period, best_duration, best_transit_time)
 
     # Perform bootstrap resampling to estimate uncertainties.
-    # This is done by resampling the time, flux, and error arrays with replacement.
-    # Note: This is a computationally intensive process, but it results in accurate estimates fo the uncertainties.
-
     bootstrap_periods = []
     bootstrap_durations = []
     bootstrap_transit_times = []
+
+    bootstrap_periods_range = np.linspace(min_period, max_period, bootstrap_resolution)
+    bootstrap_duration_range = np.linspace(duration_range[0], duration_range[1], 10)
 
     for _ in range(n_bootstrap):
         indices = np.random.choice(len(time), len(time), replace=True)
@@ -132,7 +133,7 @@ def analyze_period_with_bls(
         bootstrap_bls = BoxLeastSquares(
             bootstrap_time, bootstrap_flux, dy=bootstrap_error
         )
-        bootstrap_results = bootstrap_bls.power(periods, durations)
+        bootstrap_results = bootstrap_bls.power(bootstrap_periods_range, bootstrap_duration_range)
 
         bootstrap_max_power_idx = np.argmax(bootstrap_results.power)
         bootstrap_periods.append(bootstrap_results.period[bootstrap_max_power_idx])
@@ -146,7 +147,6 @@ def analyze_period_with_bls(
     transit_time_uncertainty = np.std(bootstrap_transit_times)
 
     # Calculate the depth of the transit.
-    # If it is too shallow filter the period out.
     depth = results.depth[max_power_idx]
     if depth < 0.000001:
         print(
@@ -174,6 +174,7 @@ def analyze_peaks_with_bls(
     duration_range=(0.01, 0.5),
     allowed_deviation=0.05,
     n_bootstrap=100,
+    bootstrap_resolution=1000,
 ):
     """
     Analyze multiple period candidates using the BLS algorithm.
@@ -206,6 +207,7 @@ def analyze_peaks_with_bls(
                             duration_range,
                             allowed_deviation,
                             n_bootstrap,
+                            bootstrap_resolution,
                         )
                         for period in peak_periods
                     ],
@@ -425,7 +427,7 @@ def calculate_fit_for_period(
     bounds = [
         (guess_for_sma * 0.5, guess_for_sma * 2),
         (0.7, 0.95),
-        (0.2, 0.6),
+        (0.1, 0.6),
         (planet_radius * 0.5, planet_radius * 2.5),
     ]
     initial_guess = [guess_for_sma, 0.85, 0.25, planet_radius]
@@ -455,7 +457,7 @@ def calculate_fit_for_period(
         )
         best_fit_params = result.x
 
-    elif method == "differential_evolution":
+    elif method == "differential-evolution":
         result = differential_evolution(
             calculate_reduced_chi_squared, bounds, args=args, **differential_options
         )
@@ -542,7 +544,7 @@ def calculate_best_fit_parameters(
     L_BFGS_B_options=None,
     nelder_mead_options=None,
     differential_options=None,
-    methods=["minimize", "differential_evolution", "L-BFGS-B"],
+    methods=["minimize", "differential-evolution", "L-BFGS-B"],
     cadence = 0.208333,
 ):
     """
@@ -579,7 +581,7 @@ def calculate_best_fit_parameters(
                     cadence,
                     method,
                     L_BFGS_B_options if method == "L-BFGS-B" else None,
-                    differential_options if method == "differential_evolution"else None,
+                    differential_options if method == "differential-evolution"else None,
                     nelder_mead_options if method == "Nelder-Mead" else None,
                 )
             )
@@ -705,14 +707,7 @@ def calculate_reduced_chi_squared(
     )
 
     chi_2 = np.sum(
-        (
-            (
-                flux[window_mask]
-                - pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask]
-            )
-            ** 2
-        )
-        / (error[window_mask] ** 2)
+        ((flux[window_mask]- pg_nodel_lightcurve_projected_onto_kepler_phase[window_mask])** 2)/ (error[window_mask] ** 2)
     )
     reduced_chi_2 = chi_2 / (len(flux[window_mask]) - len(params))
     return reduced_chi_2
@@ -751,7 +746,7 @@ def plot_phase_folded_light_curves(all_results):
     num_candidates = len(all_results[0])
     fig, axs = plt.subplots(4, num_candidates, figsize=(4 * num_candidates, 12))
 
-    methods = ["minimize", "differential_evolution", "L-BFGS-B"]
+    methods = ["L-BFGS-B", "differential-evolution", "Nelder-Mead"]
     colors = ["orangered", "limegreen", "darkviolet"]
 
     if num_candidates == 1:
@@ -840,7 +835,6 @@ def plot_phase_folded_light_curves(all_results):
                 markersize=5,
             )
             axs[i + 1][j].set_ylabel(f"Normalised Flux, {methods[i]}  ")
-            axs[i + 1][j].legend()
 
             axs[i + 1][j].errorbar(
                 pg_generated_phase[pg_mask],
@@ -851,7 +845,6 @@ def plot_phase_folded_light_curves(all_results):
                 linestyle="none",
                 markersize=4,
             )
-            axs[i + 1][j].legend(loc="upper right")
 
             axs[i + 1][j].tick_params(direction="in", which="both")
             axs[i + 1][j].xaxis.set_major_locator(ticker.MaxNLocator(nbins=5))
@@ -877,12 +870,12 @@ def plot_phase_folded_light_curves(all_results):
     fig.text(
         0.5,
         0.01,
-        "Fig.1. The fitted parameters for each of the detected periods and for each of the minimisation methods, It can be seen some fit better than others e.g . However it is apparent from the graph that the method of lightcurve generation to minimise the reduced $chi^2$ seems to work quite well",
+        "Fig.1. The fitted parameters for each of the detected periods and for each of the minimisation methods.\nThe phase folded data is plotted in the background, and in the forground the best fit is plotted.\n Due to how the BLS method works the fit for it is flat \nIt can be seen some fit better than others e.g for the planet with a period of approx 32 days the differential evolution method appears to be the best fit.\n However it is apparent from the graph that all method of lightcurve generation to minimise $\chi_R^2$ seems to fit ok.",
         ha="center",
         fontsize=12,
     )
 
-    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.13)  # Adjust the bottom margin to add a gap
     plt.show()
 
 
@@ -893,10 +886,11 @@ def print_best_fit_parameters(all_results, bls_analysis):
     all_results: list -> a list of dictionaries containing the results of the fitting analysis.
     bls_analysis: list -> a list of dictionaries containing the results of the BLS analysis.
     """
-    columns = ["Period", "\alpha", "$R_p$", "chi2"]
+    columns = ["Period", "Semi-major Axis", "Radius of the planet in solar masses", "reduced chi squared", "Best Method"]
     data = []
     period_groups = {}
     chi2_list = {}
+    method_list = {}
     u1_values = []
     u2_values = []
 
@@ -912,11 +906,14 @@ def print_best_fit_parameters(all_results, bls_analysis):
             period = result["period"]
             best_fit_params = result["best_fit_params"]
             chi2 = result["final_chi2"]
+            method = result["method"]
             if period not in period_groups:
                 period_groups[period] = []
                 chi2_list[period] = []
+                method_list[period] = []
             period_groups[period].append(best_fit_params)
             chi2_list[period].append(chi2)
+            method_list[period].append(method)
             u1_values.append(best_fit_params[1])
             u2_values.append(best_fit_params[2])
 
@@ -927,6 +924,7 @@ def print_best_fit_parameters(all_results, bls_analysis):
         std_params = np.std(params_array, axis=0)
         chi2_np = np.array(chi2_list[period])
         best_chi2 = np.min(chi2_np)
+        best_method = method_list[period][np.argmin(chi2_np)]
         std_chi2 = np.std(chi2_np)
         period_floor = np.floor(period)
         data.append(
@@ -935,18 +933,19 @@ def print_best_fit_parameters(all_results, bls_analysis):
                 f"{avg_params[0]:.4f} ± {std_params[0]:.4f}",
                 f"{avg_params[3]:.4f} ± {std_params[3]:.4f}",
                 f"{best_chi2:.4f}",
+                best_method
             ]
         )
 
     df = pd.DataFrame(data, columns=columns)
 
     def make_pretty(styler):
-        styler.set_caption("Table: Best Fit Parameters for Each Planet")
         styler.format(precision=3, thousands=",", decimal=".")
         return styler
 
     styled_df = df.style.pipe(make_pretty)
     display(styled_df)
+    print("Table 1. The best fit parameters for each of the detected periods and the best Chi squared value and its associated method")
 
     # Calculate and print total average and standard deviation for u1 and u2
     u1_np = np.array(u1_values)
@@ -955,20 +954,8 @@ def print_best_fit_parameters(all_results, bls_analysis):
     std_u1 = np.std(u1_np)
     avg_u2 = np.mean(u2_np)
     std_u2 = np.std(u2_np)
-    display(
-        Math(
-            r"Limb darkening Coefficient $u_1$: {:.3f} $\pm$ {:.3f}".format(
-                avg_u1, std_u1
-            )
-        )
-    )
-    display(
-        Math(
-            r"Limb darkening Coefficient $u_2$: {:.3f} $\pm$ {:.3f}".format(
-                avg_u2, std_u2
-            )
-        )
-    )
+    print(f"Limb darkening Coefficient u1: {avg_u1:.3f} ± {std_u1:.3f}")
+    print(f"Limb darkening Coefficient u2: {avg_u2:.3f} ± {std_u2:.3f}")
 
 
 # Below this point are the functions used to find the intial peaks,
@@ -982,8 +969,9 @@ def print_best_fit_parameters(all_results, bls_analysis):
 def getRandomisedData(path, interations, filter_type):
     """
     Function to load data from multiple fits files in a folder
-    However the twist with this function is the data is randomised!
+    However the twist with this function is the data is shuffled!
     This is to allow a altered form of the lomb-scargle periodogram to be tested where the data is randomised and then the periodogram is run on the randomised data
+    This was talked about during the report but I put it on the chopping block to get under the word count 
     The difference between the randomised lomb-scargle periodogram and the normal lomb-scargle periodogram is then calculated and it helps identify the intial peaks
     @params
     FolderPath: str -> the path to the folder containing the fits files
