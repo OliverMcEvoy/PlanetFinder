@@ -736,8 +736,29 @@ def interoplate_phase_folded_light_curve(
 
     return interpolated_values
 
+def phase_fold_light_curve_and_plot(period,time,flux,transit_duration):
 
-def plot_phase_folded_light_curves(all_results):
+    phase_folded_light_curve = phase_fold(time, period, flux)
+    window_size = transit_duration * 1.2 / period
+    window_size = 0.5
+    phase_mask = (phase_folded_light_curve >= 0.5 - window_size) & (
+                phase_folded_light_curve <= 0.5 + window_size
+            )
+
+    #make the axes 24 x 9
+
+    fig, ax = plt.subplots(1, 1, figsize=(24, 9))
+    plt.errorbar(
+        phase_folded_light_curve[phase_mask],
+        flux[phase_mask],
+        fmt="o",
+        color="red",
+        alpha=0.7,
+        linestyle="none",
+    )
+
+
+def plot_phase_folded_light_curves(all_results,period_offset=0):
     """
     Plot the phase folded light curves for each method.
     Its a bit janky and difficult to read, not proud of the presentation of this code but I think the output is pretty.
@@ -756,7 +777,7 @@ def plot_phase_folded_light_curves(all_results):
     for j in range(num_candidates):
         # Top plot: Filtered Flux and BLS Model Flux (first method)
 
-        period = all_results[0][j]["period"]
+        period = all_results[0][j]["period"] + period_offset
         result = all_results[0][j]
         window_size = result["transit_duration"] * 1.2 / result["period"]
         mask = (result["filtered_phase"] >= 0.5 - window_size) & (
@@ -795,7 +816,7 @@ def plot_phase_folded_light_curves(all_results):
             result = method_results[j]
 
             best_fit_params = result["best_fit_params"]
-            period = result["period"]
+            period = result["period"] + period_offset
 
             planets = [
                 {
@@ -880,7 +901,7 @@ def plot_phase_folded_light_curves(all_results):
     plt.show()
 
 
-def print_best_fit_parameters(all_results, bls_analysis):
+def print_best_fit_parameters(all_results, bls_analysis,period_offset=0):
     """
     A Table of the results
     @params
@@ -898,13 +919,13 @@ def print_best_fit_parameters(all_results, bls_analysis):
     # Get Period Uncertainitys
     period_uncertainties = {}
     for result in bls_analysis:
-        period_floor = np.floor(result["candidate_period"])
+        period_floor = int(np.floor(result["candidate_period"]+period_offset))
         period_uncertainties[period_floor] = result["period_uncertainty"]
 
     # Group results by period
     for method_results in all_results:
         for result in method_results:
-            period = result["period"]
+            period = result["period"]+period_offset
             best_fit_params = result["best_fit_params"]
             chi2 = result["final_chi2"]
             method = result["method"]
@@ -927,10 +948,14 @@ def print_best_fit_parameters(all_results, bls_analysis):
         best_chi2 = np.min(chi2_np)
         best_method = method_list[period][np.argmin(chi2_np)]
         std_chi2 = np.std(chi2_np)
-        period_floor = np.floor(period)
+        period_floor = int(np.floor(period))
+        if period_floor in period_uncertainties:
+            period_uncertainty = period_uncertainties[period_floor]
+        else:
+            period_uncertainty = 0  # or some default value
         data.append(
             [
-                f"{period:.5f} ± {period_uncertainties[period_floor]:.5f}",
+                f"{period:.5f} ± {period_uncertainty:.5f}",
                 f"{avg_params[0]:.4f} ± {std_params[0]:.4f}",
                 f"{avg_params[3]:.4f} ± {std_params[3]:.4f}",
                 f"{best_chi2:.4f}",
@@ -958,6 +983,8 @@ def print_best_fit_parameters(all_results, bls_analysis):
     std_u2 = np.std(u2_np)
     print(f"Limb darkening Coefficient u1: {avg_u1:.3f} ± {std_u1:.3f}")
     print(f"Limb darkening Coefficient u2: {avg_u2:.3f} ± {std_u2:.3f}")
+
+
 
 
 # Below this point are the functions used to find the intial peaks,
