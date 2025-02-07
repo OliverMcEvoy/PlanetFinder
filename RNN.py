@@ -8,10 +8,8 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from torch.nn.utils.rnn import pad_sequence
 from scipy.signal import medfilt
 from tqdm import tqdm
-from sklearn.metrics import f1_score
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 from scipy.sparse import coo_matrix
 import torch.nn.functional as F
 
@@ -255,7 +253,7 @@ def main(hdf5_path, data_percentage=1.0, period_max=50):
     if device == 'cuda':
         torch.cuda.empty_cache()
     model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=1, data_percentage=data_percentage, period_max=period_max)
+    train_model(model, hdf5_path=hdf5_path, device=device, epochs=5, batch_size=1, data_percentage=data_percentage, period_max=period_max)
 
     save_model(model, "Models/RnnModel.pth")
 
