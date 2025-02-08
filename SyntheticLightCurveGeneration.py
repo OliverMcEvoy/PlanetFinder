@@ -166,7 +166,7 @@ def generate_multi_planet_light_curve(
         )
 
     flux_with_noise = combined_light_curve * (
-        1 + np.random.normal(0, observation_noise, len(time_array))
+        1 + np.random.normal(0, observation_noise*2, len(time_array))
     )
 
     if simulate_gap_in_data:
@@ -174,7 +174,7 @@ def generate_multi_planet_light_curve(
         num_gaps = np.random.randint(1, 4)
         for _ in range(num_gaps):
             gap_start = np.random.uniform(0, total_time - 50)
-            gap_end = gap_start + np.random.uniform(0, 40)
+            gap_end = gap_start + np.random.uniform(0, 100)
             gap_mask = (time_array >= gap_start) & (time_array <= gap_end)
             flux_with_noise[gap_mask] = 1
             combined_light_curve[gap_mask] = 1
@@ -210,7 +210,7 @@ def generate_random_planet_systems(
         if force_max_planets:
             num_planets = max_planets_per_system
         else:
-            num_planets = np.random.randint(5, max_planets_per_system + 1)
+            num_planets = np.random.randint(2, max_planets_per_system + 1)
 
         planets = []
 
@@ -223,11 +223,12 @@ def generate_random_planet_systems(
             standard_deviation = (np.log(70)-np.log(5))/2
             mean_period = np.random.uniform(35, 55)
             period = np.random.lognormal(mean=np.log(mean_period), sigma=standard_deviation)
-            print(period)
 
             planet_radius = np.random.uniform(0.01, 0.04)
             semi_major_axis = (period / 365) ** (2 / 3) * np.random.uniform(0.75, 1.25)
             # varing other parameters has the same effect as eccentricity for this model so it does not make sense to vary it.
+            # Well... a minor effect is that the transit duration is longer for higher eccentricities
+            # But this is something I come back to later.
             eccentricity = 0  # np.random.uniform(0, 0.3)
             inclination = np.pi / 2
             transit_midpoint = np.random.uniform(0, period)

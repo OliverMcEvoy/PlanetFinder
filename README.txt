@@ -11,7 +11,7 @@ and
 
 A Synthetic light curve can be generated with the following command for example 
 
-python SyntheticLightCurveGeneration.py --num_systems 1 --max_planets_per_system 5 --num_iterations 400 --total_time 365 --cadence 0.0208333 --output_file light_curves.hdf5 --plot
+python SyntheticLightCurveGeneration.py --num_systems 1 --max_planets_per_system 5 --num_iterations 1 --total_time 1600 --cadence 0.0208333 --output_file light_curves.hdf5 --plot
 
 The command to generate the light curve data used to train the final models was
 
