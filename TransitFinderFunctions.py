@@ -736,26 +736,71 @@ def interoplate_phase_folded_light_curve(
 
     return interpolated_values
 
-def phase_fold_light_curve_and_plot(period,time,flux,transit_duration):
+def phase_fold_light_curve_and_plot(period,time,flux,transit_duration,bls_model_flux,offset,error):
 
     phase_folded_light_curve = phase_fold(time, period, flux)
+
+    #shift phase folder light curve by offset
+    phase_folded_light_curve = phase_folded_light_curve + offset
+
+
     window_size = transit_duration * 1.2 / period
-    window_size = 0.5
     phase_mask = (phase_folded_light_curve >= 0.5 - window_size) & (
                 phase_folded_light_curve <= 0.5 + window_size
             )
 
     #make the axes 24 x 9
 
+    # Create the first plot
     fig, ax = plt.subplots(1, 1, figsize=(24, 9))
-    plt.errorbar(
+    ax.errorbar(
         phase_folded_light_curve[phase_mask],
         flux[phase_mask],
         fmt="o",
         color="red",
         alpha=0.7,
         linestyle="none",
+        label='Observed Flux'
     )
+
+    # Add titles, labels, grid, and legend
+    ax.set_title('Phase Folded Light Curve with BLS Model')
+    ax.set_xlabel('Phase')
+    ax.set_ylabel('Flux')
+    ax.legend()
+
+    plt.show()
+
+    # Create the second plot
+    fig, ax = plt.subplots(1, 1, figsize=(24, 9))
+    ax.errorbar(
+        phase_folded_light_curve[phase_mask],
+        flux[phase_mask],
+        yerr=error[phase_mask],
+        fmt="o",
+        color="black",
+        alpha=0.7,
+        linestyle="none",
+        label='Observed Flux with Error'
+    )
+    ax.errorbar(
+        phase_folded_light_curve[phase_mask],
+        bls_model_flux[phase_mask],
+        fmt="^",
+        color="orange",
+        alpha=0.5,
+        linestyle="none",
+        markersize=4,
+        label='BLS Model Flux'
+    )
+
+    # Add titles, labels, grid, and legend
+    ax.set_title('Phase Folded Light Curve with Error Bars and BLS model')
+    ax.set_xlabel('Phase')
+    ax.set_ylabel('Flux')
+    ax.legend()
+
+    plt.show()
 
 
 def plot_phase_folded_light_curves(all_results,period_offset=0):
