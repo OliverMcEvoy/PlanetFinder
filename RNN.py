@@ -142,40 +142,31 @@ class TransitModel(nn.Module):
         return torch.rand(1).item()
         # return torch.sigmoid(self.fc_period(rnn_out)).squeeze(-1)
 
-def masked_mse_loss(predicted_periods, target_periods, predicted_num_planets, target_num_planets):
-    batch_size = 1
-    period_loss = 0
-    valid_entries = 0
+def masked_mse_loss(predicted_periods, target_periods):
 
-    for i in range(batch_size):
-        num_predicted = len(predicted_periods[i])
-        num_target = int(target_num_planets[i].item())
-        
-        # Skip if both predicted and target periods are empty
-        if num_predicted == 0 or num_target == 0:
-            continue
-        
-        # Calculate loss for valid predictions
-        valid_periods = min(num_predicted, num_target)  # Compare only valid entries
-        mask = target_periods[i][:valid_periods] > 0  # Mask out zero periods
-        valid_predicted_periods = predicted_periods[i][:valid_periods][mask]
-        valid_target_periods = target_periods[i][:valid_periods][mask]
-        
-        if len(valid_predicted_periods) > 0 and len(valid_target_periods) > 0:
-            period_loss += ((valid_predicted_periods - valid_target_periods) ** 2).mean()
-            valid_entries += 1
+    # scale factors 
+    alpha = 1
+    beta = 1
 
-    # Average period loss only if there are valid entries
-    if valid_entries > 0:
-        period_loss /= valid_entries
-    else:
-        period_loss = torch.tensor(0.0, device=predicted_periods[0].device)
+    closest_periods = []
+    loss = 0 
 
-    # Calculate the loss for the number of planets
-    num_planets_loss = ((predicted_num_planets - target_num_planets) ** 2).mean()
-    num_planets_loss = num_planets_loss * (25.5 / 2.5)  # Scale to be similar to period loss
-    
-    return period_loss + num_planets_loss
+    for predicted in predicted_periods:
+        closest_target = min(target_periods, key=lambda target: abs(predicted - target))
+        closest_periods.append(closest_target)
+
+    # Find target periods that are not closest to any predicted periods
+    target_set = set(target_periods)
+    closest_set = set(closest_periods)
+    not_closest_periods = list(target_set - closest_set)
+
+    for i in range(len(predicted_periods)):
+        loss += alpha * (predicted_periods[i] - closest_periods[i]) ** 2
+
+    if not_closest_periods:
+        loss += beta * (not_closest_periods ** 2)
+
+    return loss
 
 def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, data_percentage=1.0, period_max=50):
     dataset = ExoplanetDataset(hdf5_path)
