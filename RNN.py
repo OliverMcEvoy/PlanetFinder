@@ -146,7 +146,7 @@ def masked_mse_loss(predicted_periods, target_periods):
 
     # scale factors 
     alpha = 1
-    beta = 1
+    beta = 100
 
     closest_periods = []
     loss = 0 
