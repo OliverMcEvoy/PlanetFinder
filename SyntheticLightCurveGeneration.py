@@ -210,7 +210,7 @@ def generate_random_planet_systems(
         if force_max_planets:
             num_planets = max_planets_per_system
         else:
-            num_planets = np.random.randint(1, max_planets_per_system + 1)
+            num_planets = np.random.randint(5, max_planets_per_system + 1)
 
         planets = []
 
@@ -218,9 +218,16 @@ def generate_random_planet_systems(
         total_time = total_time
 
         for _ in range(num_planets):
-            period = np.random.uniform(1, 50)
+
+            #Generate a random period distribution centered around 40 days
+            standard_deviation = (np.log(70)-np.log(5))/2
+            mean_period = np.random.uniform(35, 55)
+            period = np.random.lognormal(mean=np.log(mean_period), sigma=standard_deviation)
+            print(period)
+
             planet_radius = np.random.uniform(0.01, 0.04)
             semi_major_axis = (period / 365) ** (2 / 3) * np.random.uniform(0.75, 1.25)
+            # varing other parameters has the same effect as eccentricity for this model so it does not make sense to vary it.
             eccentricity = 0  # np.random.uniform(0, 0.3)
             inclination = np.pi / 2
             transit_midpoint = np.random.uniform(0, period)
