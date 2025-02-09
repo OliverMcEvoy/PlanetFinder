@@ -35,6 +35,7 @@ class ExoplanetDataset(Dataset):
             detected_count = data['num_detectable_planets'][()]
             periods = sorted([data[f'planets/planet_{i}/period'][()] for i in range(detected_count)])
 
+        #TODO Include this in the data generation.
 
         # Initialize normalized flux array
         full_flux_with_noise = np.ones(len(length_of_data), dtype=np.float32)
@@ -136,7 +137,7 @@ def masked_mse_loss(predicted_periods, target_periods):
 
         non_zero_count = (target != 0).sum().item()
 
-        loss += alpha * (residual ** 2).sum()
+        loss += alpha * (residual ** 2).mean()
         loss += torch.tensor(beta * (non_zero_count - len(closest)) ** 2)
 
     return loss
