@@ -7,7 +7,8 @@ from multiprocessing import Pool, cpu_count
 import h5py
 import argparse
 import matplotlib.pyplot as plt
-
+import scipy.signal
+import multiprocessing
 
 def calculate_keplerian_orbit(period, transit_midpoint, semi_major_axis, time_array):
     '''
@@ -265,7 +266,7 @@ def generate_random_planet_systems(
 #         flux = df['flux'].apply(lambda x: json.dumps(x))
 
 
-def process_system(system, snr_threshold, total_time, cadence):
+def process_system(system, snr_threshold, total_time, cadence,lomb_scargle=False,double_lomb_scargle=False,plot=False):
     '''
     Generate a light curve for a given planetary system and return the number of detectable planets.
     @params:
@@ -299,6 +300,10 @@ def process_system(system, snr_threshold, total_time, cadence):
         )
     )
 
+    print("Light curve generated")
+    print(lomb_scargle)
+    print(double_lomb_scargle)
+
     detectable_planets = []
     standard_deviation = np.std(flux_with_noise)
     for planet in system["planets"]:
@@ -311,15 +316,31 @@ def process_system(system, snr_threshold, total_time, cadence):
     num_detectable_planets = len(detectable_planets)
     total_planets = len(system["planets"])
 
+    if not lomb_scargle and not double_lomb_scargle:
+
+        print('non lomb')
+
+        return (
+            time_array,
+            flux_with_noise,
+            combined_light_curve,
+            system["total_time"],
+            system["star_radius"],
+            system["observation_noise"],
+            system["u1"],
+            system["u2"],
+            system["planets"],
+            num_detectable_planets,
+            total_planets,
+        )
+    # Run the lomb scargle analysis
+    print('running lomb scargle')
+    print(double_lomb_scargle)
+    xaxis , power = run_lomb_scargle_analysis(time_array, flux_with_noise,resolution=5000,period_range=(1,200) ,plot=plot,double_lomb_scargle=double_lomb_scargle)
     return (
-        time_array,
-        flux_with_noise,
-        combined_light_curve,
-        system["total_time"],
+        xaxis,
+        power,
         system["star_radius"],
-        system["observation_noise"],
-        system["u1"],
-        system["u2"],
         system["planets"],
         num_detectable_planets,
         total_planets,
@@ -329,13 +350,74 @@ def process_system(system, snr_threshold, total_time, cadence):
 def plot_light_curve(time_array, flux_with_noise, combined_light_curve):
     plt.figure(figsize=(10, 6))
     plt.plot(time_array, flux_with_noise, label="Light Curve with Noise", color="red")
-    plt.plot(time_array, combined_light_curve, label="Light Curve", color="blue")
+    if combined_light_curve is not False:
+        plt.plot(time_array, combined_light_curve, label="Light Curve", color="blue")
     plt.xlabel("Time (days)")
     plt.ylabel("Flux")
     plt.legend()
     plt.title("Light Curves")
     plt.show()
 
+
+def compute_lombscargle(args):
+    time, flux, frequency_chunk = args
+    return scipy.signal.lombscargle(time, flux, frequency_chunk, precenter=True, normalize=False)
+
+# Find transit peaks (Lomb-Scargle Periodogram)
+def find_transits(time, flux, resolution, period_range, double_lomb_scargle=False, plot=False):
+    '''
+    @params
+    time: array -> array containing the time values of the kepler dataframe.
+    flux: array -> array containing the corresponding flux values for each time.
+    resolution: int -> the number of points to use in the periodogram.
+
+    find the transit peaks, the expected inputs 
+    '''
+    period = np.linspace(period_range[0], period_range[1], resolution)
+
+    frequency_range = (time[1] - time[0], time[-1] - time[0])
+    print(frequency_range)
+    frequency = np.linspace((1 / frequency_range[1]), (1 / frequency_range[0]), resolution)
+
+    # Compute the first Lomb-Scargle periodogram
+    power_lomb_1 = compute_lombscargle((time, flux, frequency))
+
+    if plot:
+        plt.figure(figsize=(6, 6))
+        plt.plot(frequency, power_lomb_1, label="First Lomb-Scargle Periodogram")
+        plt.show()
+
+    if double_lomb_scargle is False:
+        return frequency, power_lomb_1
+
+    print('computing second periodogram')
+    # Second Lomb-Scargle periodogram on the power spectrum
+    power_lomb_2 = compute_lombscargle((frequency, power_lomb_1, period))
+
+    if plot:
+        plt.figure(figsize=(6, 6))
+        plt.plot(period, power_lomb_2, label="Second Lomb-Scargle Periodogram")
+        plt.show()
+
+    return period, power_lomb_2
+
+def run_lomb_scargle_analysis(time, flux, resolution=5000,period_range=(1, 30), plot = True, double_lomb_scargle=False):
+    print("Running Lomb-Scargle Periodogram Analysis...")
+    xaxis, power = find_transits(time,flux, resolution,period_range,double_lomb_scargle=double_lomb_scargle, plot=plot)
+    print("Lomb-Scargle Periodogram analysis done")
+
+
+    if plot:
+        # Visualize the Lomb-Scargle periodogram and detected peaks
+        plt.figure(figsize=(10, 6))
+        plt.plot(xaxis, power, label="Lomb-Scargle Periodogram")
+        plt.xlabel("Period (days)")
+        plt.ylabel("Power")
+        plt.title("Lomb-Scargle Periodogram")
+        plt.legend()
+        plt.show()
+
+    return xaxis, power
 
 def main():
     parser = argparse.ArgumentParser(
@@ -381,12 +463,55 @@ def main():
         help="Name of the output HDF5 file.",
     )
     parser.add_argument("--plot", action="store_true", help="Plot the light curves.")
+    parser.add_argument("--single_lomb_scargle", action="store_true", help="Run the single lomb scargle analysis")
+    parser.add_argument("--double_lomb_scargle", action="store_true", help="Run the double lomb scargle analysis")
 
     args = parser.parse_args()
 
+
+    #run if not a lomb scargle required
+    if args.single_lomb_scargle is False and args.double_lomb_scargle is False:
+        with h5py.File(args.output_file, "w") as hdf5_file:
+            for iteration in tqdm(
+                range(args.num_iterations), desc="Generating planet systems"
+            ):
+                random_systems = generate_random_planet_systems(
+                    args.num_systems, args.max_planets_per_system, args.total_time
+                )
+
+                with Pool(cpu_count()) as pool:
+                    results = pool.starmap(
+                        process_system,
+                        [
+                            (system, args.snr_threshold, args.total_time, args.cadence)
+                            for system in random_systems
+                        ],
+                    )
+
+                group = hdf5_file.create_group(f"iteration_{iteration}")
+                for i, result in enumerate(results):
+                    system_group = group.create_group(f"system_{i}")
+                    system_group.create_dataset("time", data=result[0])
+                    system_group.create_dataset("flux_with_noise", data=result[1])
+                    system_group.create_dataset("num_detectable_planets", data=result[9])
+
+                    planets_group = system_group.create_group("planets")
+                    for j, planet in enumerate(result[8]):
+                        planet_group = planets_group.create_group(f"planet_{j}")
+                        planet_group.create_dataset("period", data=planet["period"])
+
+            if args.plot:
+                for result in results:
+                    plot_light_curve(result[0], result[1], result[2])
+
+            print("HDF5 file created successfully.")
+    
+    #Runs if a lomb scargle is required 
+
     with h5py.File(args.output_file, "w") as hdf5_file:
+        print("lomb scargles generating...")
         for iteration in tqdm(
-            range(args.num_iterations), desc="Generating planet systems"
+            range(args.num_iterations), desc="Generating planet systems using lomb scargle analysis"
         ):
             random_systems = generate_random_planet_systems(
                 args.num_systems, args.max_planets_per_system, args.total_time
@@ -396,7 +521,7 @@ def main():
                 results = pool.starmap(
                     process_system,
                     [
-                        (system, args.snr_threshold, args.total_time, args.cadence)
+                        (system, args.snr_threshold, args.total_time, args.cadence,args.single_lomb_scargle,args.double_lomb_scargle,args.plot)
                         for system in random_systems
                     ],
                 )
@@ -404,20 +529,22 @@ def main():
             group = hdf5_file.create_group(f"iteration_{iteration}")
             for i, result in enumerate(results):
                 system_group = group.create_group(f"system_{i}")
-                system_group.create_dataset("time", data=result[0])
-                system_group.create_dataset("flux_with_noise", data=result[1])
-                system_group.create_dataset("num_detectable_planets", data=result[9])
+                system_group.create_dataset("xais", data=result[0])
+                system_group.create_dataset("power", data=result[1])
+                system_group.create_dataset("num_detectable_planets", data=result[4])
 
                 planets_group = system_group.create_group("planets")
-                for j, planet in enumerate(result[8]):
+                for j, planet in enumerate(result[3]):
                     planet_group = planets_group.create_group(f"planet_{j}")
                     planet_group.create_dataset("period", data=planet["period"])
 
         if args.plot:
             for result in results:
-                plot_light_curve(result[0], result[1], result[2])
+                plot_light_curve(result[0], result[1], False)
 
         print("HDF5 file created successfully.")
+
+
 
 
 if __name__ == "__main__":
