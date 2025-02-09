@@ -1,22 +1,25 @@
 import h5py
 import numpy as np
-import os
 import torch
+import os
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Subset, random_split
 from torch.nn.utils.rnn import pad_sequence
-from scipy.signal import medfilt
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-from scipy.sparse import coo_matrix
 import torch.nn.functional as F
 
 class ExoplanetDataset(Dataset):
-    def __init__(self, hdf5_path, max_planets=5):
+    '''
+    Dataset class for the exoplanet data stored in an HDF5 file.
+    The dataset contains light curves with simulated exoplanet transits.
+    Each item in the dataset is a tuple containing the flux values and the periods of the transits.
+    '''
+    def __init__(self, hdf5_path, max_planets=10, max_period=50):
         self.hdf5_path = hdf5_path
-        self.period_max = 50
+        self.max_period = max_period
         self.max_planets = max_planets
         with h5py.File(hdf5_path, 'r') as f:
             self.keys = [f"{iteration}/{system}" for iteration in f.keys() for system in f[iteration].keys()]
@@ -26,168 +29,167 @@ class ExoplanetDataset(Dataset):
 
     def __getitem__(self, idx):
         key = self.keys[idx]
-        length_of_data = np.arange(0, 1600, 0.02043357)
+        length_of_data = np.arange(0, 1600, 1)
         
         with h5py.File(self.hdf5_path, 'r') as f:
             data = f[key]
-            time = np.array(data['time'])
-            flux_with_noise = np.array(data['flux_with_noise'], dtype=np.float32)
             detected_count = data['num_detectable_planets'][()]
-            periods = sorted([data[f'planets/planet_{i}/period'][()] for i in range(detected_count)])
+            time = np.array(data['time'])
+            flux_with_noise = np.array(data['flux_with_noise'])
+            periods = [data[f'planets/planet_{i}/period'][()] for i in range(detected_count)]
 
-        #TODO Include this in the data generation.
+        # Normalize periods to range [0, 1]
+        periods = torch.tensor(periods, dtype=torch.float32)
+        periods = periods.sort(descending=True).values
+        periods = periods / self.max_period
+        periods = F.pad(periods, pad=(0,int(self.max_planets - detected_count)))
 
         # Initialize normalized flux array
-        full_flux_with_noise = np.ones(len(length_of_data), dtype=np.float32)
+        flux_with_noise = torch.tensor(flux_with_noise, dtype=torch.float32)
+        full_flux = torch.ones(len(length_of_data), dtype=torch.float32)
         time_to_index = {t: i for i, t in enumerate(length_of_data)}
-        for t, flux in zip(time, flux_with_noise):
+        for t, f in zip(time, flux_with_noise):
             if t in time_to_index:
-                full_flux_with_noise[time_to_index[t]] = flux
+                full_flux[time_to_index[t]] = f
 
         # Normalize flux to range [0, 1]
-        min_flux = full_flux_with_noise.min()
-        max_flux = full_flux_with_noise.max()
+        min_flux = full_flux.min()
+        max_flux = full_flux.max()
         if max_flux - min_flux > 0:  # Avoid division by zero
-            full_flux_with_noise = (full_flux_with_noise - min_flux) / (max_flux - min_flux)
+            full_flux = (full_flux - min_flux) / (max_flux - min_flux)
 
-        return (
-            torch.tensor(full_flux_with_noise, dtype=torch.float32),
-            torch.tensor(periods, dtype=torch.float32),
-        )
+        full_flux = full_flux.unsqueeze(1) # Input size of 1
+
+        # Normalize detected_count to range [0, 1]
+        detected_count = torch.tensor(detected_count, dtype=torch.float32)
+        detected_count = detected_count / self.max_planets
+
+        return full_flux, periods, detected_count
 
 def collate_fn(batch):
-    fluxes, periods = zip(*batch)
-    fluxes_padded = pad_sequence(fluxes, padding_value=0)
-    periods_padded = pad_sequence(periods, padding_value=0)
-    
-    # Reshape periods to (batch_size, number_of_planets, 1)
-    periods_padded = periods_padded.permute(1, 0).unsqueeze(2)
-    
-    return fluxes_padded, periods_padded
+    fluxes, periods, detected_counts = zip(*batch)
+    fluxes = pad_sequence(fluxes, padding_value=0, batch_first=True)
+    periods = torch.stack(periods)
+    detected_counts = torch.stack(detected_counts)
+    return fluxes, periods, detected_counts
 
 
-class BayesianDense(nn.Module):
-    def __init__(self, in_features, out_features, p=0.3):
+class LinearDropout(nn.Module):
+    def __init__(self, input_size, output_size, p=0.3):
         super().__init__()
-        self.linear = nn.Linear(in_features, out_features)
-        self.dropout = nn.Dropout(p)
+        self.norm = nn.BatchNorm1d(input_size)
+        self.linear = nn.Linear(input_size, output_size)
+        if p < 1:
+            self.dropout = nn.Dropout(p)
+        else:
+            self.dropout = nn.Identity()
 
     def forward(self, x):
-        return self.dropout(self.linear(x))
+        #x = self.norm(x)
+        x = self.dropout(x)
+        x = self.linear(x)
+        return x
 
 class TransitModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=1024, period_max=200):
+    def __init__(self, input_size=1, hidden_size=1024, output_size=10, num_layers=3):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.period_max = period_max
-
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers=3, dropout=0.3)
-        self.fc_period = BayesianDense(hidden_size, 5, p=0.3)  # Change output size to 5
+        self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, dropout=0, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
+        self.sigmoid = nn.Sigmoid()
+        self.softmax = nn.Softmax(0)
 
     def forward(self, x):
-        x = x.unsqueeze(2)  # [B, L, I]
-        _, hidden = self.rnn(x)  # [num_layers, B, H]
-        periods = self.fc_period(hidden[-1])  # [B, 5]
-        periods = periods.unsqueeze(2)  # [B, 5, 1]
-
-        return periods
-
-    def _resolve_close_periods(self, periods, rnn_out):
-        periods = torch.sort(periods)[0]
-        min_distance = 0.1  # Minimum distance between periods
-
-        for k in range(10):
-            conflict = False
-            for j in range(1, len(periods)):
-                if periods[j] - periods[j - 1] < min_distance:
-                    periods[j] = self._repredict_period(rnn_out[j])
-                    conflict = True
-            if not conflict:
-                break
-            else:
-                periods = torch.sort(periods)[0]  # Re-sort periods after potential changes
-        return torch.sort(periods)[0]
+        rnn_out, hidden = self.rnn(x)
+        logits = self.fc(rnn_out[:,-1])
+        periods = self.sigmoid(logits)
+        conf = self.softmax(logits)
+        return periods, conf
     
-    def _repredict_period(self, rnn_out):
-        # just return a random value between 0 nad 1 to punish the model for guessing periods so close togther,
-        # This seems to work so much better than repredicting the period
-        return torch.rand(1).item()
-        # return torch.sigmoid(self.fc_period(rnn_out)).squeeze(-1)
 
-def masked_mse_loss(predicted_periods, target_periods):
-    # scale factors 
-    alpha = 1
-    beta = 100
-    loss = 0
-    batch_size ,_ ,_ = target_periods.shape
-
-    # print(f"predicted_periods shape: {predicted_periods.shape}")
-    # print(f"target_periods shape: {target_periods.shape}")
-
-    for i in range(batch_size):
-        # print(f"predicted_periods[{i}] shape: {predicted_periods[i].shape}")
-        # print(f"predicted_periods[{i}]: {predicted_periods[i]}")
-        # print(f"target_periods[{i}] shape: {target_periods[i].shape}")
-        # print(f"target_periods[{i}]: {target_periods[i]}")
-
-        pred = predicted_periods[i]
-        target = target_periods[i]
-        residual = (pred[:,None] - target[None,:]).abs()
-        closest = residual.min(1).indices.unique()
-
-        non_zero_count = (target != 0).sum().item()
-
-        loss += alpha * (residual ** 2).mean()
-        loss += torch.tensor(beta * (non_zero_count - len(closest)) ** 2)
-
-    return loss
-
-def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, data_percentage=1.0, period_max=50):
-    dataset = ExoplanetDataset(hdf5_path)
-    if data_percentage < 1.0:
-        subset_size = int(len(dataset) * data_percentage)
+def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, max_period=50, max_planets=10, seed=42):
+    dataset = ExoplanetDataset(hdf5_path, max_planets=max_planets, max_period=max_period)
+    print("Number of Light Curves", len(dataset))
+    if dataset_size < 1.0:
+        subset_size = int(len(dataset) * dataset_size)
         dataset = Subset(dataset, range(subset_size))
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
+
+    if train_size < 1.0:
+        train_size = int(len(dataset) * train_size)
+        train_set, test_set = random_split(
+            dataset, 
+            [train_size, (len(dataset) - train_size)],
+            generator=torch.Generator().manual_seed(seed)
+        )
+ 
+    print(len(train_set), len(test_set))
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
+
+    return train_loader, test_loader
+
+def train_model(model, train_loader, test_loader, device=torch.device("cuda"), epochs=10, patience=5):
+    loss_fn = torch.nn.MSELoss(reduction="mean")
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     model.train()
 
-    losses = []
+    train_losses = []
     batch_losses = []
     best_loss = float('inf')
     patience_counter = 0
 
     for epoch in range(epochs):
-        total_loss = 0
-        with tqdm(dataloader, unit="batch") as tepoch:
-            for flux, periods in tepoch:
-                tepoch.set_description(f"Epoch {epoch + 1}/{epochs}")
-                flux, periods = flux.to(device), periods.to(device),
+        train_loss = 0
+        with tqdm(train_loader) as tqdm_loader:
+            for flux, periods, detected_counts in tqdm_loader:
+                tqdm_loader.set_description(f"Train Epoch {epoch + 1}/{epochs}")
+                flux, periods, detected_counts = flux.to(device), periods.to(device), detected_counts.to(device)
                 optimizer.zero_grad()
-                pred_periods = model(flux)
+                pred_periods, _ = model(flux)
                 
-                loss = masked_mse_loss(pred_periods, periods)
+                print(pred_periods[0])
+                print(periods[0])
+                loss = loss_fn(pred_periods, periods)
                 loss.backward()
                 optimizer.step()
-                total_loss += loss.item()
+
+                train_loss += loss.item()
                 batch_losses.append(loss.item())
-                tepoch.set_postfix(loss=loss.item())
+                tqdm_loader.set_postfix(loss=loss.item())
 
-        avg_loss = total_loss / len(dataloader)
-        losses.append(avg_loss)
+        train_loss = train_loss / len(train_loader)
+        train_losses.append(train_loss)
 
-        print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
+        test_loss = 0
+        with tqdm(test_loader) as tqdm_loader:
+            with torch.no_grad():
+                for flux, periods, detected_counts in tqdm_loader:
+                    tqdm_loader.set_description(f"Test Epoch {epoch + 1}/{epochs}")
+                    flux, periods, detected_counts = flux.to(device), periods.to(device), detected_counts.to(device)
+                    pred_periods, _ = model(flux)
+                    
+                    loss = loss_fn(pred_periods, periods)
+                    test_loss += loss.item()
+                    tqdm_loader.set_postfix(loss=loss.item())
 
-        save_model(model, f"{epoch}best_model_stuf.pth")
+        test_loss = test_loss / len(test_loader)
+        print(f"Epoch {epoch + 1}/{epochs}, Train Loss: {train_loss:.5f}, Test Loss: {test_loss:.5f}")
+
         # Early stopping
-        if avg_loss < best_loss:
-            best_loss = avg_loss
+        if test_loss < best_loss:
+            #save_model(model, f"{epoch + 1:04d}.pth")
+            best_loss = test_loss
             patience_counter = 0
+
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 print("Early stopping triggered")
                 break
 
+        #plot_losses(epochs, train_losses, batch_losses)
+
+
+def plot_losses(epochs, losses, batch_losses):
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 2, 1)
     plt.plot(range(0, epochs), losses,color='indigo')
@@ -217,33 +219,50 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
 
 # Main Function
-def main(hdf5_path, data_percentage=1.0, period_max=200):
+def main(
+        hdf5_path='LightCurves.hdf5', 
+        dataset_size=1.0,
+        train_size=0.8,
+        batch_size=32,
+        max_period=200,
+        max_planets=10,
+        epochs=100,
+        patience=5,
+    ):
+
     torch.backends.cudnn.enabled = False
     print("cuDNN enabled:", torch.backends.cudnn.enabled)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device == 'cuda':
         torch.cuda.empty_cache()
-    model = TransitModel().to(device)
-    train_model(model, hdf5_path=hdf5_path, device=device, epochs=3, batch_size=3, data_percentage=data_percentage, period_max=period_max,patience=3)
 
-    save_model(model, "Models/RnnModel_Adjusted.pth")
+    model = TransitModel(output_size=max_planets, hidden_size=512, num_layers=1).to(device)
+    train_loader, test_loader = split_dataset(
+        hdf5_path, 
+        dataset_size=dataset_size, 
+        train_size=train_size,
+        batch_size=batch_size,
+        max_period=max_period,
+        max_planets=max_planets
+    )
+    train_model(model, train_loader, test_loader, device=device, epochs=epochs, patience=patience)
+    #save_model(model, "Models/RnnModel_Adjusted.pth")
 
 # Save Model
 def save_model(model, path):
-    torch.save({
-        'model_state_dict': model.state_dict(),
-    }, path)
+    torch.save(model.state_dict(), path)
     print(f"Model saved to {path}")
 
 # Load Model
 def load_model(path, device):
     checkpoint = torch.load(path, map_location=device)
     model = TransitModel().to(device)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model.load_state_dict(checkpoint)
     model.eval()
     return model
 
-if __name__ == "__main__":
-    hdf5_path = "TrainingData/improved_randomness.hdf5"
-    main(hdf5_path, data_percentage=0.008, period_max=200)
+if __name__ == '__main__':
+    os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
+    hdf5_path = 'LightCurves.hdf5'
+    main(hdf5_path=hdf5_path, dataset_size=1.0, max_period=1600, max_planets=8, batch_size=8, epochs=1000, patience=100)
