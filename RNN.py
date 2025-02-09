@@ -83,7 +83,7 @@ class BayesianDense(nn.Module):
         return self.dropout(self.linear(x))
 
 class TransitModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=1024, max_planets=5, period_max=200):
+    def __init__(self, input_size=1, hidden_size=1024, max_planets=5, period_max=50):
         super().__init__()
         self.hidden_size = hidden_size
         self.max_planets = max_planets
@@ -92,32 +92,12 @@ class TransitModel(nn.Module):
         self.rnn = nn.RNN(input_size, hidden_size, num_layers=3, dropout=0.3)
         self.fc_planet_count = BayesianDense(hidden_size, 1, p=0.3)
         self.fc_period = BayesianDense(hidden_size, 10, p=0.3)
-        self.fc_additional = nn.Linear(hidden_size, hidden_size)
 
     def forward(self, x):
-        x = x.unsqueeze(-1)
-        rnn_out, _ = self.rnn(x)
-        print(rnn_out.shape)
+        x = x.unsqueeze(2) #[BLI]
+        _, hidden = self.rnn(x) #[BO]
+        periods = self.fc_period(hidden[0])
 
-        logits = rnn_out.squeeze(1)
-        #planet_count = torch.sigmoid(self.fc_planet_count(logits))  # Scale to [0, 1]
-        periods = torch.sigmoid(self.fc_period(logits))
-
-        """
-        planet_count = torch.sigmoid(self.fc_planet_count(rnn_out[:, -1]))  # Scale to [0, 1]
-        planet_count = planet_count * (self.max_planets - 1) + 1  # Scale to [1, max_planets]
-        predicted_planet_count = planet_count.round().long().clamp(1, self.max_planets)
-
-        predicted_periods = []
-        for i in range(x.size(0)):
-            num_planets = predicted_planet_count[i].item()
-            periods = torch.sigmoid(self.fc_period(rnn_out[i, :num_planets])).squeeze(-1)
-            periods = self._resolve_close_periods(periods, rnn_out[i, :num_planets])
-            periods = periods * self.period_max
-            predicted_periods.append(periods)
-        """
-
-        #return predicted_periods, planet_count.unsqueeze(1)
         return periods
 
     def _resolve_close_periods(self, periods, rnn_out):
@@ -143,28 +123,19 @@ class TransitModel(nn.Module):
         # return torch.sigmoid(self.fc_period(rnn_out)).squeeze(-1)
 
 def masked_mse_loss(predicted_periods, target_periods):
-
     # scale factors 
     alpha = 1
     beta = 100
+    loss = 0
+    batch_size, target_size = target_periods.shape
 
-    closest_periods = []
-    loss = 0 
-
-    for predicted in predicted_periods:
-        closest_target = min(target_periods, key=lambda target: abs(predicted - target))
-        closest_periods.append(closest_target)
-
-    # Find target periods that are not closest to any predicted periods
-    target_set = set(target_periods)
-    closest_set = set(closest_periods)
-    not_closest_periods = len(list(target_set - closest_set))
-
-    for i in range(len(predicted_periods)):
-        loss += alpha * (predicted_periods[i] - closest_periods[i]) ** 2
-
-    if not_closest_periods:
-        loss += beta * (not_closest_periods ** 2)
+    for i in range(batch_size):
+        pred = predicted_periods[i]
+        target = target_periods[i]
+        residual = (pred[:,None] - target[None,:]).abs()
+        closest = residual.min(1).indices.unique()
+        loss += alpha * (residual ** 2).sum()
+        loss += torch.tensor(beta * (target_size - len(closest)) ** 2)
 
     return loss
 
@@ -189,8 +160,8 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
                 tepoch.set_description(f"Epoch {epoch + 1}/{epochs}")
                 flux, periods, detected_counts = flux.to(device), periods.to(device), detected_counts.to(device)
                 optimizer.zero_grad()
-                pred_periods, pred_num_planets = model(flux)
-
+                pred_periods = model(flux)
+                
                 loss = masked_mse_loss(pred_periods, periods)
                 loss.backward()
                 optimizer.step()
@@ -203,6 +174,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
         print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
 
+        save_model(model, f"{epoch}best_model_stuf.pth")
         # Early stopping
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -210,7 +182,6 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                save_model(model, f"{epoch}best_model_stuf.pth")
                 print("Early stopping triggered")
                 break
 
