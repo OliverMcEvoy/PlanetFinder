@@ -83,7 +83,7 @@ class BayesianDense(nn.Module):
         return self.dropout(self.linear(x))
 
 class TransitModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=1024, max_planets=5, period_max=50):
+    def __init__(self, input_size=1, hidden_size=1024, max_planets=5, period_max=200):
         super().__init__()
         self.hidden_size = hidden_size
         self.max_planets = max_planets
@@ -190,9 +190,8 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
                 flux, periods, detected_counts = flux.to(device), periods.to(device), detected_counts.to(device)
                 optimizer.zero_grad()
                 pred_periods, pred_num_planets = model(flux)
-                target_num_planets = detected_counts * model.max_planets  # Scale back to [1, max_planets]
-                
-                loss = masked_mse_loss(pred_periods, periods, pred_num_planets, target_num_planets)
+
+                loss = masked_mse_loss(pred_periods, periods)
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
@@ -204,7 +203,6 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
 
         print(f"Epoch {epoch + 1}/{epochs}, Average Loss: {avg_loss:.4f}")
 
-        save_model(model, f"{epoch}best_model_stuf.pth")
         # Early stopping
         if avg_loss < best_loss:
             best_loss = avg_loss
@@ -212,6 +210,7 @@ def train_model(model, hdf5_path, device, epochs=10, batch_size=16, patience=5, 
         else:
             patience_counter += 1
             if patience_counter >= patience:
+                save_model(model, f"{epoch}best_model_stuf.pth")
                 print("Early stopping triggered")
                 break
 
