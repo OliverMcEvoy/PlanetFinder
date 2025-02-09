@@ -158,7 +158,7 @@ def masked_mse_loss(predicted_periods, target_periods):
     # Find target periods that are not closest to any predicted periods
     target_set = set(target_periods)
     closest_set = set(closest_periods)
-    not_closest_periods = list(target_set - closest_set)
+    not_closest_periods = len(list(target_set - closest_set))
 
     for i in range(len(predicted_periods)):
         loss += alpha * (predicted_periods[i] - closest_periods[i]) ** 2
