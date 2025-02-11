@@ -17,50 +17,54 @@ class ExoplanetDataset(Dataset):
     The dataset contains light curves with simulated exoplanet transits.
     Each item in the dataset is a tuple containing the flux values and the periods of the transits.
     '''
-    def __init__(self, hdf5_path, max_planets=10, max_period=400):
+    def __init__(self, hdf5_path, max_planets=10, max_period=50):
         self.hdf5_path = hdf5_path
-        self.max_planets = max_planets
         self.max_period = max_period
+        self.max_planets = max_planets
         with h5py.File(hdf5_path, 'r') as f:
             self.keys = [f"{iteration}/{system}" for iteration in f.keys() for system in f[iteration].keys()]
- 
+
     def __len__(self):
         return len(self.keys)
 
     def __getitem__(self, idx):
         key = self.keys[idx]
+        length_of_data = np.arange(0, 1600, 1)
         
         with h5py.File(self.hdf5_path, 'r') as f:
             data = f[key]
-            planets_group = data['planets']
-            detected_count = len([name for name in planets_group if name.startswith('planet_')])
-            xaxis = np.array(data['xais'])
-            power = np.array(data['power'])
+            detected_count = data['num_detectable_planets'][()]
+            time = np.array(data['time'])
+            flux_with_noise = np.array(data['flux_with_noise'])
             periods = [data[f'planets/planet_{i}/period'][()] for i in range(detected_count)]
 
-            # Normalize periods to range [0, 1]
-            periods = torch.tensor(periods, dtype=torch.float32)
-            periods = periods.sort(descending=True).values
-            periods = periods / self.max_period
-            periods = F.pad(periods, pad=(0, int(self.max_planets - detected_count)))
+        # Normalize periods to range [0, 1]
+        periods = torch.tensor(periods, dtype=torch.float32)
+        periods = periods.sort(descending=True).values
+        periods = periods / self.max_period
+        periods = F.pad(periods, pad=(0,int(self.max_planets - detected_count)))
 
-            # Initialize normalized power array
-            power = torch.tensor(power, dtype=torch.float32)
+        # Initialize normalized flux array
+        flux_with_noise = torch.tensor(flux_with_noise, dtype=torch.float32)
+        full_flux = torch.ones(len(length_of_data), dtype=torch.float32)
+        time_to_index = {t: i for i, t in enumerate(length_of_data)}
+        for t, f in zip(time, flux_with_noise):
+            if t in time_to_index:
+                full_flux[time_to_index[t]] = f
 
-            # Normalize power to rang#44e [0, 1]
-            min_power = power.min()
-            max_power = power.max()
-            if max_power - min_power > 0:  # Avoid division by zero
-                power = (power - min_power) / (max_power - min_power)
+        # Normalize flux to range [0, 1]
+        min_flux = full_flux.min()
+        max_flux = full_flux.max()
+        if max_flux - min_flux > 0:  # Avoid division by zero
+            full_flux = (full_flux - min_flux) / (max_flux - min_flux)
 
-            power = power.unsqueeze(1)  # Input size of 1
+        full_flux = full_flux.unsqueeze(1) # Input size of 1
 
-             # Normalize detected_count to range [0, 1]
-            detected_count = torch.tensor(detected_count, dtype=torch.float32)
-            detected_count = detected_count / self.max_planets
+        # Normalize detected_count to range [0, 1]
+        detected_count = torch.tensor(detected_count, dtype=torch.float32)
+        detected_count = detected_count / self.max_planets
 
-
-        return power, periods, detected_count
+        return full_flux, periods, detected_count
 
 def collate_fn(batch):
     fluxes, periods, detected_counts = zip(*batch)
@@ -87,9 +91,9 @@ class LinearDropout(nn.Module):
         return x
 
 class TransitModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=1024, output_size=10, num_layers=4):
+    def __init__(self, input_size=1, hidden_size=1024, output_size=10, num_layers=3):
         super().__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, dropout=0.3, batch_first=True)
+        self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, dropout=0, batch_first=True)
         self.fc = nn.Linear(hidden_size, output_size)
         self.sigmoid = nn.Sigmoid()
         self.softmax = nn.Softmax(0)
@@ -102,7 +106,7 @@ class TransitModel(nn.Module):
         return periods, conf
     
 
-def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, max_period=400, max_planets=10, seed=42):
+def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, max_period=50, max_planets=10, seed=42):
     dataset = ExoplanetDataset(hdf5_path, max_planets=max_planets, max_period=max_period)
     print("Number of Light Curves", len(dataset))
     if dataset_size < 1.0:
@@ -125,7 +129,7 @@ def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, ma
 
 def train_model(model, train_loader, test_loader, device=torch.device("cuda"), epochs=10, patience=5):
     loss_fn = torch.nn.MSELoss(reduction="mean")
-    optimizer = optim.Adam(model.parameters(), lr=0.00001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     model.train()
 
     train_losses = []
@@ -140,12 +144,10 @@ def train_model(model, train_loader, test_loader, device=torch.device("cuda"), e
                 tqdm_loader.set_description(f"Train Epoch {epoch + 1}/{epochs}")
                 flux, periods, detected_counts = flux.to(device), periods.to(device), detected_counts.to(device)
                 optimizer.zero_grad()
-                #print('shape of flux')
-                #print(flux.shape)
                 pred_periods, _ = model(flux)
                 
-                # print(pred_periods[0])
-                # print(periods[0])
+                print(pred_periods[0])
+                print(periods[0])
                 loss = loss_fn(pred_periods, periods)
                 loss.backward()
                 optimizer.step()
@@ -235,7 +237,7 @@ def main(
     if device == 'cuda':
         torch.cuda.empty_cache()
 
-    model = TransitModel(output_size=10, hidden_size=1028, num_layers=6).to(device)
+    model = TransitModel(output_size=max_planets, hidden_size=512, num_layers=1).to(device)
     train_loader, test_loader = split_dataset(
         hdf5_path, 
         dataset_size=dataset_size, 
@@ -245,7 +247,7 @@ def main(
         max_planets=max_planets
     )
     train_model(model, train_loader, test_loader, device=device, epochs=epochs, patience=patience)
-    save_model(model, "Models/RnnModel_Adjusted.pth")
+    #save_model(model, "Models/RnnModel_Adjusted.pth")
 
 # Save Model
 def save_model(model, path):
@@ -255,12 +257,12 @@ def save_model(model, path):
 # Load Model
 def load_model(path, device):
     checkpoint = torch.load(path, map_location=device)
-    model = TransitModel(output_size=10, hidden_size=1028, num_layers=6).to(device)
+    model = TransitModel().to(device)
     model.load_state_dict(checkpoint)
     model.eval()
     return model
 
 if __name__ == '__main__':
     os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
-    hdf5_path ='TrainingData/LombScargle400Filter.hdf5'
-    main(hdf5_path=hdf5_path, dataset_size=1.0, max_period=400, max_planets=10, batch_size=16, epochs=20, patience=5)
+    hdf5_path = 'LightCurves.hdf5'
+    main(hdf5_path=hdf5_path, dataset_size=1.0, max_period=1600, max_planets=8, batch_size=8, epochs=1000, patience=100)

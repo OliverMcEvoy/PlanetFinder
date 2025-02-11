@@ -300,25 +300,19 @@ def process_system(system, snr_threshold, total_time, cadence,lomb_scargle=False
         )
     )
 
-    print("Light curve generated")
-    print(lomb_scargle)
-    print(double_lomb_scargle)
-
     detectable_planets = []
     standard_deviation = np.std(flux_with_noise)
     for planet in system["planets"]:
         snr = (planet["rp"] * 2 / standard_deviation) * (
             np.floor(total_time / planet["period"]) ** 0.5
         )
-        if snr >= snr_threshold:
+        if snr >= snr_threshold and planet["period"] < 400:
             detectable_planets.append(planet)
 
     num_detectable_planets = len(detectable_planets)
     total_planets = len(system["planets"])
 
     if not lomb_scargle and not double_lomb_scargle:
-
-        print('non lomb')
 
         return (
             time_array,
@@ -329,13 +323,11 @@ def process_system(system, snr_threshold, total_time, cadence,lomb_scargle=False
             system["observation_noise"],
             system["u1"],
             system["u2"],
-            system["planets"],
+            detectable_planets,
             num_detectable_planets,
             total_planets,
         )
     # Run the lomb scargle analysis
-    print('running lomb scargle')
-    print(double_lomb_scargle)
     xaxis , power = run_lomb_scargle_analysis(time_array, flux_with_noise,resolution=5000,period_range=(1,200) ,plot=plot,double_lomb_scargle=double_lomb_scargle)
     return (
         xaxis,
@@ -376,7 +368,6 @@ def find_transits(time, flux, resolution, period_range, double_lomb_scargle=Fals
     period = np.linspace(period_range[0], period_range[1], resolution)
 
     frequency_range = (time[1] - time[0], time[-1] - time[0])
-    print(frequency_range)
     frequency = np.linspace((1 / frequency_range[1]), (1 / frequency_range[0]), resolution)
 
     # Compute the first Lomb-Scargle periodogram
@@ -390,7 +381,6 @@ def find_transits(time, flux, resolution, period_range, double_lomb_scargle=Fals
     if double_lomb_scargle is False:
         return frequency, power_lomb_1
 
-    print('computing second periodogram')
     # Second Lomb-Scargle periodogram on the power spectrum
     power_lomb_2 = compute_lombscargle((frequency, power_lomb_1, period))
 
@@ -402,9 +392,7 @@ def find_transits(time, flux, resolution, period_range, double_lomb_scargle=Fals
     return period, power_lomb_2
 
 def run_lomb_scargle_analysis(time, flux, resolution=5000,period_range=(1, 30), plot = True, double_lomb_scargle=False):
-    print("Running Lomb-Scargle Periodogram Analysis...")
     xaxis, power = find_transits(time,flux, resolution,period_range,double_lomb_scargle=double_lomb_scargle, plot=plot)
-    print("Lomb-Scargle Periodogram analysis done")
 
 
     if plot:
@@ -534,9 +522,15 @@ def main():
                 system_group.create_dataset("num_detectable_planets", data=result[4])
 
                 planets_group = system_group.create_group("planets")
+                #Use i for name to ensure no missing planets
+                i = 0
                 for j, planet in enumerate(result[3]):
-                    planet_group = planets_group.create_group(f"planet_{j}")
-                    planet_group.create_dataset("period", data=planet["period"])
+
+                    #Filter out periods greater than 400 so they are not recorded
+                    if planet["period"] < 400:
+                        planet_group = planets_group.create_group(f"planet_{i}")
+                        planet_group.create_dataset("period", data=planet["period"])
+                        i += 1
 
         if args.plot:
             for result in results:
