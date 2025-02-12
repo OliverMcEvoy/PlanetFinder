@@ -117,7 +117,7 @@ def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, ma
             generator=torch.Generator().manual_seed(seed)
         )
  
-    print(len(train_set), len(test_set))
+    print(len(train_set), len(test_set))    
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, num_workers=4, pin_memory=True)
 

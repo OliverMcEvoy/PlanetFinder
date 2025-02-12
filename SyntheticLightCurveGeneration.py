@@ -7,6 +7,7 @@ from multiprocessing import Pool, cpu_count
 import h5py
 import argparse
 import matplotlib.pyplot as plt
+from astropy.timeseries import LombScargle
 import scipy.signal
 import multiprocessing
 
@@ -328,7 +329,7 @@ def process_system(system, snr_threshold, total_time, cadence,lomb_scargle=False
             total_planets,
         )
     # Run the lomb scargle analysis
-    xaxis , power = run_lomb_scargle_analysis(time_array, flux_with_noise,resolution=5000,period_range=(1,200) ,plot=plot,double_lomb_scargle=double_lomb_scargle)
+    xaxis , power = run_lomb_scargle_analysis(time_array, flux_with_noise,resolution=20000,period_range=(1,400) ,plot=plot,double_lomb_scargle=double_lomb_scargle)
     return (
         xaxis,
         power,
@@ -350,10 +351,11 @@ def plot_light_curve(time_array, flux_with_noise, combined_light_curve):
     plt.title("Light Curves")
     plt.show()
 
-
 def compute_lombscargle(args):
     time, flux, frequency_chunk = args
-    return scipy.signal.lombscargle(time, flux, frequency_chunk, precenter=True, normalize=False)
+    lombscargle = LombScargle(time, flux)
+    power = lombscargle.power(frequency_chunk)
+    return power
 
 # Find transit peaks (Lomb-Scargle Periodogram)
 def find_transits(time, flux, resolution, period_range, double_lomb_scargle=False, plot=False):
