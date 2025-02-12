@@ -177,14 +177,14 @@ def print_comparison_results(ml_results):
 
     for i in range(max(len(true_periods), len(predicted_periods[0]))):
         true_period = true_periods[i] if i < len(true_periods) else np.nan
-        predicted_period = (predicted_periods[0][i] * 200) if i < len(predicted_periods[0]) else None
+        predicted_period = (predicted_periods[0][i].item() * 400) if i < len(predicted_periods[0]) else None
 
         period_data_real.append([true_period, predicted_period])
 
-    period_df_real = pd.DataFrame(period_data_real, columns=["Actual Period", "Predicted Period"])
+    # Sort the period_data_real list by the predicted periods
+    period_data_real.sort(key=lambda x: (x[1] if x[1] is not None else float('inf')))
 
-    # Sort the DataFrame by both columns in ascending order
-    period_df_real = period_df_real.sort_values(by=["Actual Period", "Predicted Period"])
+    period_df_real = pd.DataFrame(period_data_real, columns=["Actual Period", "Predicted Period"])
 
     def make_pretty(styler):
         styler.format(precision=3, thousands=",", decimal=".")
@@ -194,7 +194,6 @@ def print_comparison_results(ml_results):
 
     display(styled_period_df_real)
     print("Table 1. Comparison of Actual and Predicted Periods for Real Data")
-
 
 
 
@@ -230,7 +229,7 @@ def main(
     # use the fourier transform to get the lightcurve in the right format
 
 
-    time , power = run_lomb_scargle_analysis(light_curve['time_array'], light_curve['flux_with_noise'],resolution=5000,period_range=(1,200) ,plot=True,double_lomb_scargle=True)
+    time , power = run_lomb_scargle_analysis(light_curve['time_array'], light_curve['flux_with_noise'],resolution=5000,period_range=(1,200) ,plot=True,double_lomb_scargle=False)
 
     results = analyze_light_curves(light_curve, power, model, device)
 
