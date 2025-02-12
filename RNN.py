@@ -86,19 +86,70 @@ class LinearDropout(nn.Module):
         x = self.linear(x)
         return x
 
-class TransitModel(nn.Module):
-    def __init__(self, input_size=1, hidden_size=1024, output_size=10, num_layers=4):
+class AttentionLayer(nn.Module):
+    def __init__(self, hidden_size):
         super().__init__()
-        self.rnn = nn.RNN(input_size, hidden_size, num_layers=num_layers, dropout=0.3, batch_first=True)
-        self.fc = nn.Linear(hidden_size, output_size)
+        self.attention = nn.Linear(hidden_size, 1)
+        
+    def forward(self, x):
+        weights = F.softmax(self.attention(x), dim=1)
+        return torch.sum(weights * x, dim=1)
+
+class TransitModel(nn.Module):
+    def __init__(self, input_size=1, hidden_size=256, output_size=10, num_layers=4):
+        super().__init__()
+        
+        # Bidirectional LSTM
+        self.lstm = nn.LSTM(
+            input_size, 
+            hidden_size, 
+            num_layers=num_layers, 
+            dropout=0.1, 
+            batch_first=True,
+            bidirectional=True
+        )
+        
+        # Double hidden size due to bidirectional
+        self.attention = AttentionLayer(hidden_size * 2)
+        
+        # Deep fully connected layers with residual connections
+        self.fc_layers = nn.ModuleList([
+            LinearDropout(hidden_size * 2, hidden_size),
+            nn.ReLU(),
+            LinearDropout(hidden_size, hidden_size),
+            nn.ReLU(),
+            LinearDropout(hidden_size, hidden_size // 2),
+            nn.ReLU(),
+        ])
+        
+        self.layer_norm = nn.LayerNorm(hidden_size // 2)
+        self.final_fc = nn.Linear(hidden_size // 2, output_size)
         self.sigmoid = nn.Sigmoid()
-        self.softmax = nn.Softmax(0)
+        self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        rnn_out, hidden = self.rnn(x)
-        logits = self.fc(rnn_out[:,-1])
+        # LSTM layer
+        lstm_out, _ = self.lstm(x)
+        
+        # Attention
+        context = self.attention(lstm_out)
+        
+        # Process through FC layers with residual connections
+        x = context
+        residual = x
+        
+        for i, layer in enumerate(self.fc_layers):
+            x = layer(x)
+            if i % 2 == 1 and x.shape == residual.shape:  # Apply residual after every 2 layers if shapes match
+                x = x + residual
+                residual = x
+        
+        x = self.layer_norm(x)
+        logits = self.final_fc(x)
+        
         periods = self.sigmoid(logits)
         conf = self.softmax(logits)
+        
         return periods, conf
     
 
@@ -125,7 +176,7 @@ def split_dataset(hdf5_path, dataset_size=1.0, train_size=0.8, batch_size=16, ma
 
 def train_model(model, train_loader, test_loader, device=torch.device("cuda"), epochs=10, patience=5):
     loss_fn = torch.nn.MSELoss(reduction="mean")
-    optimizer = optim.Adam(model.parameters(), lr=0.00001)
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
     model.train()
 
     train_losses = []
@@ -235,7 +286,7 @@ def main(
     if device == 'cuda':
         torch.cuda.empty_cache()
 
-    model = TransitModel(output_size=10, hidden_size=1028, num_layers=6).to(device)
+    model = TransitModel(output_size=10, hidden_size=128, num_layers=2).to(device)
     train_loader, test_loader = split_dataset(
         hdf5_path, 
         dataset_size=dataset_size, 
@@ -255,12 +306,12 @@ def save_model(model, path):
 # Load Model
 def load_model(path, device):
     checkpoint = torch.load(path, map_location=device)
-    model = TransitModel(output_size=10, hidden_size=1028, num_layers=6).to(device)
+    model = TransitModel(output_size=10, hidden_size=128, num_layers=2).to(device)
     model.load_state_dict(checkpoint)
     model.eval()
     return model
 
 if __name__ == '__main__':
     os.environ['HDF5_USE_FILE_LOCKING'] = 'FALSE'
-    hdf5_path ='TrainingData/LombScargle400Filter.hdf5'
-    main(hdf5_path=hdf5_path, dataset_size=1.0, max_period=400, max_planets=10, batch_size=16, epochs=20, patience=5)
+    hdf5_path ='TrainingData/SingleLombScargle400Filter.hdf5'
+    main(hdf5_path=hdf5_path, dataset_size=0.02, max_period=400, max_planets=10, batch_size=4, epochs=20, patience=2)
