@@ -6,7 +6,7 @@ from astropy.timeseries import LombScargle
 from tqdm import tqdm
 import argparse
 
-def save_lightcurves(path, total_time=1600, cadence=0.020833, max_planets=8, max_period=400, min_period=1, resolution=1500):
+def save_lightcurves(path, total_time=1600, cadence=0.0208333, max_planets=8, max_period=400, min_period=1, resolution=1500):
     for folder in ["power", "periods"]:
         if not os.path.exists(folder):
             os.makedirs(folder)
