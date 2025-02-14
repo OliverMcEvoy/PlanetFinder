@@ -51,8 +51,8 @@ def collate_fn(batch):
     return power, periods
 
 def create_dataloaders(dataset_size=1.0, train_size=0.8, batch_size=16, seed=42):
-    #dataset = ExoplanetDataset()
-    dataset = TessDataset()
+    dataset = ExoplanetDataset()
+    #dataset = TessDataset()
 
     print("Number of Light Curves", len(dataset))
     if dataset_size < 1.0:
