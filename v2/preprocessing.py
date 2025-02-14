@@ -6,12 +6,12 @@ from astropy.timeseries import LombScargle
 from tqdm import tqdm
 import argparse
 
-def save_lightcurves(path, total_time=1600, cadence=0.020833, max_planets=8, max_period=400, resolution=1500):
+def save_lightcurves(path, total_time=1600, cadence=0.020833, max_planets=8, max_period=400, min_period=1, resolution=1500):
     for folder in ["power", "periods"]:
         if not os.path.exists(folder):
             os.makedirs(folder)
 
-    frequency = np.linspace(1 / (max_period * resolution), 1 / max_period, resolution)
+    frequency = np.linspace(1 / max_period, 1 / min_period, resolution)
 
     with h5py.File(path, "r") as file:
         keys = [f"{iteration}/{system}" for iteration in file.keys() for system in file[iteration].keys()]
@@ -60,6 +60,7 @@ if __name__ == "__main__":
     parser.add_argument("--cadence", type=float, default=0.0208333, help="Time between observations in days.")
     parser.add_argument("--max_planets", type=int, default=8, help="Maximum number of model output periods.")
     parser.add_argument("--max_period", type=int, default=400, help="Maximum period to normalise data.")
+    parser.add_argument("--min_period", type=int, default=1, help="Minimum period to normalise data.")
     parser.add_argument("--resolution", type=int, default=1500, help="Resolution of Lomb-Scargle periodogram.")
 
     args = vars(parser.parse_args())
